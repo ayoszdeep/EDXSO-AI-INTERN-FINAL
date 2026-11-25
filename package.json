@@ -1,14 +1,17 @@
 {
-  "name": "edxso-app",
+  "name": "edxso-linkedin-discovery",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "cli": "tsx src/cli/discover.ts",
+    "test": "tsx --test src/lib/__tests__/pipeline.test.ts"
   },
   "dependencies": {
+    "lucide-react": "^1.80.0",
     "next": "16.4.6",
     "react": "19.3.0",
     "react-dom": "19.3.0"
@@ -22,6 +25,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
     "tailwindcss": "4.3.3",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }
