@@ -253,6 +253,21 @@ test("live keyword run: Serper posts -> Apify commenters -> seed-derived lookali
     const body = init?.body ? JSON.parse(String(init.body)) : {};
     const json = (data: unknown) => new Response(JSON.stringify(data), { status: 200 });
 
+    if (url.startsWith("https://google.serper.dev/images")) {
+      return json({
+        images: [
+          {
+            link: "https://in.linkedin.com/in/meera-shah",
+            thumbnailUrl: "https://encrypted-tbn0.gstatic.com/images?q=tbn:meera-dp",
+            imageUrl: "https://media.licdn.com/dms/image/meera.jpg",
+          },
+          {
+            link: "https://www.linkedin.com/in/someone-else",
+            thumbnailUrl: "https://encrypted-tbn0.gstatic.com/images?q=tbn:wrong-person",
+          },
+        ],
+      });
+    }
     if (url.startsWith("https://google.serper.dev/search")) {
       if (String(body.q).startsWith("site:linkedin.com/posts")) {
         return json({
@@ -286,7 +301,12 @@ test("live keyword run: Serper posts -> Apify commenters -> seed-derived lookali
           type: "comment",
           postId: "730000000000000001" + "0",
           commentary: "As a former principal advising 15 schools, trustees ask peers first.",
-          actor: { name: "Commenter One", linkedinUrl: "https://www.linkedin.com/in/commenter-one", position: "Former Principal at ABC" },
+          actor: {
+            name: "Commenter One",
+            linkedinUrl: "https://www.linkedin.com/in/commenter-one",
+            position: "Former Principal at ABC",
+            pictureUrl: "https://media.licdn.com/dms/image/commenter-one.jpg",
+          },
         },
         {
           type: "comment",
@@ -331,11 +351,13 @@ test("live keyword run: Serper posts -> Apify commenters -> seed-derived lookali
     const c = result.commenters[0];
     assert.equal(c.associatedPostUrls.length, 2);
     assert.equal(c.linkedinUrl, "https://www.linkedin.com/in/commenter-one");
+    assert.equal(c.avatarUrl, "https://media.licdn.com/dms/image/commenter-one.jpg");
     assert.equal(c.aiClassification?.fitScore, 90);
 
     assert.equal(result.lookalikes.length, 1, "commenter excluded from lookalikes");
     const l = result.lookalikes[0];
     assert.equal(l.name, "Meera Shah");
+    assert.equal(l.avatarUrl, "https://encrypted-tbn0.gstatic.com/images?q=tbn:meera-dp");
     assert.equal(l.isTestData, false);
     assert.equal(l.discoveredVia?.seedCommenterNames[0], "Commenter One");
     assert.equal(l.seedProfiles[0].seedCommenterName, "Commenter One");
@@ -440,4 +462,40 @@ test("non-school seeds still produce role-based lookalike queries", () => {
   const qs = buildLookalikeQueries([seed]);
   assert.equal(qs.length, 1);
   assert.ok(qs[0].query.includes('"Java Backend Developer"'), qs[0].query);
+});
+
+test("avatar extraction handles Apify shapes, CSV imports, and ignores LinkedIn ghost placeholders", () => {
+  const posts = [fakePost("7300000000000000001")];
+  const records = mapApifyComments(
+    [
+      {
+        type: "comment",
+        postId: "7300000000000000001",
+        commentary: "Hello",
+        actor: {
+          name: "Real Pic",
+          linkedinUrl: "https://www.linkedin.com/in/real-pic",
+          pictureUrl: "https://media.licdn.com/dms/image/v2/real.jpg",
+        },
+      },
+      {
+        type: "comment",
+        postId: "7300000000000000001",
+        commentary: "Ghost",
+        actor: {
+          name: "Ghost Pic",
+          linkedinUrl: "https://www.linkedin.com/in/ghost-pic",
+          pictureUrl: "https://static.licdn.com/aero-v1/sc/h/ghost-person.png",
+        },
+      },
+    ],
+    posts
+  );
+  assert.equal(records[0].avatarUrl, "https://media.licdn.com/dms/image/v2/real.jpg");
+  assert.equal(records[1].avatarUrl, undefined);
+
+  const csvRows = parseImportedCommenters(
+    `name,linkedin_url,profile_pic,comment\nAnita,https://www.linkedin.com/in/anita,https://media.licdn.com/anita.jpg,Hi`
+  );
+  assert.equal(csvRows[0].avatarUrl, "https://media.licdn.com/anita.jpg");
 });

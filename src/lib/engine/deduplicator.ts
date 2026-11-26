@@ -6,6 +6,7 @@ export interface DeduplicatedCommenter {
   name: string;
   linkedinUrl: string;
   canonicalLinkedinUrl: string;
+  avatarUrl?: string;
   headline: string;
   currentRole: string;
   organization: string;
@@ -56,6 +57,7 @@ export function deduplicateCommenters(
         name: record.authorName,
         linkedinUrl: cleanLinkedInUrl(record.authorProfileUrl),
         canonicalLinkedinUrl: canonicalUrl,
+        avatarUrl: record.avatarUrl,
         headline: record.headline,
         currentRole: record.currentRole,
         organization: record.organization,
@@ -81,6 +83,9 @@ export function deduplicateCommenters(
       existing.commentCount += 1;
 
       // Merge richer fields if missing on the initial record
+      if (!existing.avatarUrl && record.avatarUrl) {
+        existing.avatarUrl = record.avatarUrl;
+      }
       if (!existing.location && record.location) {
         existing.location = record.location;
       }

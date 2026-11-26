@@ -173,6 +173,7 @@ export function discoverLookalikes(params: {
       name: candidate.name,
       linkedinUrl: cleanLinkedInUrl(candidate.linkedinUrl),
       canonicalLinkedinUrl: canonicalCandUrl,
+      avatarUrl: candidate.avatarUrl,
       headline: candidate.headline,
       currentRole: candidate.currentRole,
       organization: candidate.organization,

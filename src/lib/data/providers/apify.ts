@@ -1,6 +1,7 @@
 import { LinkedInPost, RawCommentRecord } from "@/lib/types";
 import {
   canonicalizeLinkedInUrl,
+  cleanAvatarUrl,
   cleanLinkedInUrl,
   decodeHtmlText,
   extractActivityId,
@@ -27,6 +28,23 @@ export function resolveApifyToken(token?: string): string | undefined {
   return token?.trim() || process.env.APIFY_API_TOKEN?.trim() || undefined;
 }
 
+interface ApifyPersonShape {
+  name?: string;
+  profileUrl?: string;
+  linkedinUrl?: string;
+  position?: string;
+  headline?: string;
+  author?: boolean;
+  pictureUrl?: unknown;
+  picture?: unknown;
+  avatarUrl?: unknown;
+  avatar?: unknown;
+  photoUrl?: unknown;
+  profilePicture?: unknown;
+  imageUrl?: unknown;
+  imgUrl?: unknown;
+}
+
 interface ApifyCommentItem {
   type?: string;
   id?: string;
@@ -39,14 +57,26 @@ interface ApifyCommentItem {
   postUrl?: string;
   post_url?: string;
   query?: string | { post?: string };
-  actor?: {
-    name?: string;
-    linkedinUrl?: string;
-    position?: string;
-    headline?: string;
-    author?: boolean;
-  };
-  author?: { name?: string; profileUrl?: string; linkedinUrl?: string; headline?: string };
+  actor?: ApifyPersonShape;
+  author?: ApifyPersonShape;
+}
+
+function extractApifyAvatar(person?: ApifyPersonShape): string | undefined {
+  if (!person) return undefined;
+  for (const field of [
+    person.pictureUrl,
+    person.picture,
+    person.avatarUrl,
+    person.avatar,
+    person.profilePicture,
+    person.photoUrl,
+    person.imageUrl,
+    person.imgUrl,
+  ]) {
+    const cleaned = cleanAvatarUrl(field);
+    if (cleaned) return cleaned;
+  }
+  return undefined;
 }
 
 export async function fetchCommentsFromApify(params: {
@@ -146,6 +176,7 @@ export function mapApifyComments(items: ApifyCommentItem[], posts: LinkedInPost[
       postUrl: post.url,
       authorName: name,
       authorProfileUrl: isValidLinkedInProfileUrl(rawProfile) ? cleanLinkedInUrl(rawProfile) : "",
+      avatarUrl: extractApifyAvatar(item.actor) ?? extractApifyAvatar(item.author),
       headline: headline || "Headline not provided",
       currentRole: split.role || "Role not provided",
       organization: split.organization || "Organization not provided",

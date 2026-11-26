@@ -1,5 +1,5 @@
 import { ImportedCommenter } from "@/lib/types";
-import { cleanLinkedInUrl, isValidLinkedInProfileUrl, splitHeadline } from "@/lib/data/linkedin-urls";
+import { cleanAvatarUrl, cleanLinkedInUrl, isValidLinkedInProfileUrl, splitHeadline } from "@/lib/data/linkedin-urls";
 
 /**
  * Parses user-supplied commenter records. Pure function shared by the browser
@@ -51,6 +51,28 @@ const FIELD_ALIASES: Record<keyof ImportedCommenter, string[]> = {
     "url",
     "linkedin",
   ],
+  avatarUrl: [
+    "avatarurl",
+    "avatar_url",
+    "avatar url",
+    "avatar",
+    "pictureurl",
+    "picture_url",
+    "picture url",
+    "picture",
+    "photourl",
+    "photo_url",
+    "photo url",
+    "photo",
+    "profilepic",
+    "profile_pic",
+    "profile pic",
+    "profilepicture",
+    "profile_picture",
+    "imageurl",
+    "image_url",
+    "dp",
+  ],
   currentRole: ["currentrole", "current_role", "role", "title", "jobtitle", "job title", "position"],
   organization: ["organization", "organisation", "org", "company", "companyname", "employer"],
   location: ["location", "city", "region", "geo"],
@@ -82,9 +104,18 @@ function rowToCommenter(row: Row): ImportedCommenter {
   if (actor && typeof actor === "object") {
     const headline = String(actor.position ?? actor.headline ?? "").trim();
     const split = splitHeadline(headline);
+    const avatarUrl =
+      cleanAvatarUrl(actor.pictureUrl) ??
+      cleanAvatarUrl(actor.picture) ??
+      cleanAvatarUrl(actor.avatarUrl) ??
+      cleanAvatarUrl(actor.avatar) ??
+      cleanAvatarUrl(actor.profilePicture) ??
+      cleanAvatarUrl(actor.photoUrl) ??
+      cleanAvatarUrl(actor.imageUrl);
     return {
       name: String(actor.name ?? "").trim(),
       linkedinUrl: String(actor.linkedinUrl ?? actor.profileUrl ?? actor.url ?? "").trim(),
+      avatarUrl,
       headline,
       currentRole: split.role,
       organization: split.organization,
@@ -98,6 +129,7 @@ function rowToCommenter(row: Row): ImportedCommenter {
   return {
     name: pickField(row, "name"),
     linkedinUrl: pickField(row, "linkedinUrl"),
+    avatarUrl: cleanAvatarUrl(pickField(row, "avatarUrl")),
     currentRole: pickField(row, "currentRole") || split.role,
     organization: pickField(row, "organization") || split.organization,
     location: pickField(row, "location"),
@@ -311,6 +343,7 @@ function finalize(rows: ImportedCommenter[]): ImportedCommenter[] {
       linkedinUrl: isValidLinkedInProfileUrl(r.linkedinUrl ?? "")
         ? cleanLinkedInUrl(r.linkedinUrl)
         : "",
+      avatarUrl: cleanAvatarUrl(r.avatarUrl),
     }))
     .filter((r) => r.name.length > 1 && !/^(name|full name)$/i.test(r.name));
 }

@@ -280,6 +280,7 @@ export function analyzeCommenters(params: {
       name: c.name,
       linkedinUrl: c.linkedinUrl,
       canonicalLinkedinUrl: c.canonicalLinkedinUrl,
+      avatarUrl: c.avatarUrl,
       headline: c.headline,
       currentRole: c.currentRole,
       organization: c.organization,

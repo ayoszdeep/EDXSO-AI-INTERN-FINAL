@@ -16,6 +16,7 @@ import { computeTextSimilarity } from "@/lib/engine/semantic";
 import {
   activityIdToDate,
   canonicalizeLinkedInUrl,
+  cleanAvatarUrl,
   cleanLinkedInUrl,
   expandLinkedInShortLink,
   extractActivityId,
@@ -292,6 +293,7 @@ export function mapImportedCommenters(
       postUrl: post.url,
       authorName: c.name.trim(),
       authorProfileUrl: c.linkedinUrl?.trim() || "",
+      avatarUrl: cleanAvatarUrl(c.avatarUrl),
       headline: headline || "Headline not provided",
       currentRole: role || "Role not provided",
       organization: org || "Organization not provided",
