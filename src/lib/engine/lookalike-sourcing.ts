@@ -61,7 +61,26 @@ function rolePhrasesFor(seed: AnalyzedCommenter): string[] {
     const key = ind.startsWith("Multi-School") ? "Multi-School Network" : ind;
     phrases.push(...(INDICATOR_PHRASES[key] ?? []));
   }
+  // Non-school seeds (e.g. engineers on a hiring post): fall back to the seed's own role title,
+  // so lookalikes are still "similar in role"; the EDXSO ranking then scores them honestly.
+  if (phrases.length === 0) {
+    const own = genericRolePhrase(seed.currentRole);
+    if (own) phrases.push(own);
+  }
   return Array.from(new Set(phrases));
+}
+
+function genericRolePhrase(role: string): string | null {
+  if (!role || /not provided|not shown|linkedin member/i.test(role)) return null;
+  const clean = role
+    .replace(/\(.*?\)/g, " ")
+    .split(/[|,•·/@]|\s-\s|\bat\b/i)[0]
+    .replace(/[^\p{L}\p{N}&+.#\s-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const words = clean.split(" ").filter(Boolean);
+  if (words.length === 0 || words.length > 5 || clean.length < 4) return null;
+  return clean;
 }
 
 function locationTerm(seed: AnalyzedCommenter): string {

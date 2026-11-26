@@ -17,9 +17,11 @@ import {
   activityIdToDate,
   canonicalizeLinkedInUrl,
   cleanLinkedInUrl,
+  expandLinkedInShortLink,
   extractActivityId,
   extractPostAuthorHandle,
   inferTopicsFromPostUrl,
+  isLinkedInShortLink,
   isValidLinkedInPostUrl,
 } from "@/lib/data/linkedin-urls";
 import {
@@ -120,10 +122,17 @@ async function retrieveForPostUrl(
   apifyToken: string | undefined,
   imported: ImportedCommenter[]
 ): Promise<RetrievedSourceBundle> {
-  const suppliedUrl = (request.postUrl || request.manualInput?.postUrl || "").trim();
+  let suppliedUrl = (request.postUrl || request.manualInput?.postUrl || "").trim();
+  if (suppliedUrl && isLinkedInShortLink(suppliedUrl)) {
+    const expanded = await expandLinkedInShortLink(suppliedUrl).catch(() => null);
+    if (!expanded) {
+      throw new Error("Could not expand this lnkd.in short link. Open it in your browser and paste the full post URL instead.");
+    }
+    suppliedUrl = expanded;
+  }
   if (!suppliedUrl || !isValidLinkedInPostUrl(suppliedUrl)) {
     throw new Error(
-      "Please supply a valid LinkedIn post URL (https://www.linkedin.com/posts/..., /feed/update/urn:li:activity:..., or /pulse/...)."
+      "Please supply a LinkedIn post link: linkedin.com/posts/..., linkedin.com/feed/update/..., or an lnkd.in short link."
     );
   }
   const canonicalSupplied = canonicalizeLinkedInUrl(suppliedUrl);

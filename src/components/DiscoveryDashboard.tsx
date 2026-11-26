@@ -20,6 +20,7 @@ import {
   SettingsModal,
 } from "@/components/SettingsModal";
 import {
+  ArrowRight,
   ArrowUpRight,
   BookOpen,
   Check,
@@ -29,7 +30,6 @@ import {
   ExternalLink,
   Link2,
   Loader2,
-  MapPin,
   Search,
   Settings2,
   Sparkles,
@@ -38,16 +38,11 @@ import {
 const SAMPLE_TEST_POST_URL =
   "https://www.linkedin.com/posts/demo-k12-gtm_k12-b2b-sales-school-trustees-activity-7264102938471001";
 
-const PRESET_QUERIES = [
-  "K12 B2B Sales",
-  "School Trustees & Principals",
-  "Retired Principals School Consultants",
-  "Multi-School EdTech Partnerships",
-];
+const PRESET_QUERIES = ["K12 B2B Sales", "School Trustees & Principals", "Retired Principals School Consultants"];
 
-const STAGES = ["Input", "Posts", "Commenters", "AI analysis", "Lookalikes", "Rank & export"];
+const PAGE_SIZE = 10;
 
-type Track = "both" | "commenters" | "lookalikes";
+type Tab = "commenters" | "lookalikes";
 
 export function DiscoveryDashboard() {
   const [mode, setMode] = useState<SearchInputMode>("keyword");
@@ -59,7 +54,8 @@ export function DiscoveryDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [track, setTrack] = useState<Track>("both");
+  const [tab, setTab] = useState<Tab>("commenters");
+  const [visible, setVisible] = useState(PAGE_SIZE);
   const [minScore, setMinScore] = useState(0);
   const [tierFilter, setTierFilter] = useState("all");
   const [textFilter, setTextFilter] = useState("");
@@ -68,6 +64,7 @@ export function DiscoveryDashboard() {
   const [showMethodology, setShowMethodology] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+  const [showAllPosts, setShowAllPosts] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState<"csv" | "json" | null>(null);
   const exportRef = useRef<HTMLDivElement>(null);
@@ -85,6 +82,14 @@ export function DiscoveryDashboard() {
     gemini: false,
   });
   const [manualCommentersRaw, setManualCommentersRaw] = useState("");
+
+  const applyResult = useCallback((data: DiscoveryResult) => {
+    setResult(data);
+    setShowDetails(data.warnings.length > 0);
+    setVisible(PAGE_SIZE);
+    setShowAllPosts(false);
+    setTab(data.commenters.length > 0 || data.lookalikes.length === 0 ? "commenters" : "lookalikes");
+  }, []);
 
   const executeDiscovery = useCallback(
     async (override?: Partial<DiscoveryRequest>) => {
@@ -122,15 +127,14 @@ export function DiscoveryDashboard() {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Discovery request failed");
-        setResult(data as DiscoveryResult);
-        setShowDetails((data as DiscoveryResult).warnings.length > 0);
+        applyResult(data as DiscoveryResult);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to run discovery");
       } finally {
         setLoading(false);
       }
     },
-    [apiKeys, dataSourcePref, manualCommentersRaw, mode, postUrl, query]
+    [apiKeys, applyResult, dataSourcePref, manualCommentersRaw, mode, postUrl, query]
   );
 
   useEffect(() => {
@@ -165,7 +169,7 @@ export function DiscoveryDashboard() {
         return data as DiscoveryResult;
       })
       .then((data) => {
-        if (active) setResult(data);
+        if (active) applyResult(data);
       })
       .catch((err) => {
         if (active) setError(err instanceof Error ? err.message : "Failed to run discovery");
@@ -176,7 +180,7 @@ export function DiscoveryDashboard() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [applyResult]);
 
   useEffect(() => {
     if (!exportOpen) return;
@@ -271,25 +275,29 @@ export function DiscoveryDashboard() {
   const importedCount = useMemo(() => parseCommentersText(manualCommentersRaw).length, [manualCommentersRaw]);
   const isLiveRequest = mode === "post_url" || dataSourcePref === "authorized_provider";
 
+  const activeList = tab === "commenters" ? commenters : lookalikes;
+  const totalForTab = tab === "commenters" ? (result?.commenters.length ?? 0) : (result?.lookalikes.length ?? 0);
+  const filtersActive = minScore > 0 || tierFilter !== "all" || textFilter.trim() !== "";
+  const posts = result ? (showAllPosts ? result.posts : result.posts.slice(0, 3)) : [];
+
   return (
     <div className="flex min-h-screen flex-col">
       {/* Header */}
       <header className="sticky top-0 z-30 border-b border-line bg-paper/90 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-3 px-4 sm:px-6">
+        <div className="mx-auto flex h-16 max-w-5xl items-center justify-between gap-3 px-4 sm:px-6">
           <div className="flex items-center gap-3">
             <Image src="/edxso-logo.png" alt="EDXSO" width={107} height={32} priority className="h-8 w-auto" />
             <span className="hidden h-6 w-px bg-line sm:block" />
             <span className="hidden text-sm font-semibold text-ink-soft sm:block">Prospect Discovery</span>
           </div>
-
-          <nav className="flex items-center gap-1.5">
+          <nav className="flex items-center gap-1">
             <HeaderButton onClick={() => setShowMethodology(true)} label="How scoring works">
               <BookOpen className="h-4 w-4" />
             </HeaderButton>
             <HeaderButton onClick={() => setShowSettings(true)} label="Data sources">
               <Settings2 className="h-4 w-4" />
             </HeaderButton>
-            <div className="relative" ref={exportRef}>
+            <div className="relative ml-1" ref={exportRef}>
               <button
                 type="button"
                 disabled={!result || exporting !== null}
@@ -305,7 +313,7 @@ export function DiscoveryDashboard() {
               {exportOpen && (
                 <div
                   role="menu"
-                  className="absolute right-0 mt-1.5 w-40 overflow-hidden rounded-lg border border-line bg-paper py-1 shadow-lg"
+                  className="absolute right-0 mt-1.5 w-44 overflow-hidden rounded-lg border border-line bg-paper py-1 shadow-lg"
                 >
                   {(["csv", "json"] as const).map((f) => (
                     <button
@@ -325,38 +333,64 @@ export function DiscoveryDashboard() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-6xl flex-1 space-y-6 px-4 py-8 sm:px-6">
-        {/* Search */}
+      <main className="mx-auto w-full max-w-5xl flex-1 space-y-6 px-4 py-8 sm:px-6 sm:py-10">
+        {/* 1. Search */}
         <section className="rounded-2xl border border-line bg-paper p-5 shadow-sm sm:p-7">
-          <h1 className="text-2xl font-extrabold tracking-tight text-ink sm:text-[28px]">
+          <h1 className="text-2xl font-extrabold tracking-tight text-ink sm:text-3xl">
             Find school-network decision makers
           </h1>
-          <p className="mt-1.5 max-w-2xl text-sm text-muted">
-            Search a phrase or paste a LinkedIn post. We find the people who commented, rank them for EDXSO outreach,
-            and discover similar professionals.
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
+            Start from a phrase or a LinkedIn post. The tool finds who commented, ranks them for EDXSO outreach with AI,
+            and discovers similar professionals, all with full LinkedIn profile links.
           </p>
 
-          <div className="mt-5 inline-flex rounded-lg bg-cream-2 p-1" role="tablist" aria-label="Input mode">
-            {(
-              [
-                ["keyword", "Keyword", Search],
-                ["post_url", "Post URL", Link2],
-              ] as const
-            ).map(([value, label, Icon]) => (
-              <button
-                key={value}
-                type="button"
-                role="tab"
-                aria-selected={mode === value}
-                onClick={() => setMode(value)}
-                className={`inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-semibold transition ${
-                  mode === value ? "bg-paper text-brand shadow-sm" : "text-muted hover:text-ink"
-                }`}
-              >
-                <Icon className="h-3.5 w-3.5" />
-                {label}
-              </button>
-            ))}
+          <div className="mt-6 flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-lg bg-cream-2 p-1" role="tablist" aria-label="Input mode">
+              {(
+                [
+                  ["keyword", "Keyword", Search],
+                  ["post_url", "Post URL", Link2],
+                ] as const
+              ).map(([value, label, Icon]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === value}
+                  onClick={() => setMode(value)}
+                  className={`inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-semibold transition ${
+                    mode === value ? "bg-paper text-brand shadow-sm" : "text-muted hover:text-ink"
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {label}
+                </button>
+              ))}
+            </div>
+            {mode === "keyword" && (
+              <div className="inline-flex rounded-lg bg-cream-2 p-1" role="radiogroup" aria-label="Data source">
+                {(
+                  [
+                    ["authorized_provider", "Live data"],
+                    ["labelled_test_dataset", "Test data"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="radio"
+                    aria-checked={dataSourcePref === value}
+                    disabled={value === "authorized_provider" && !hasLiveSearchKey}
+                    onClick={() => setDataSourcePref(value)}
+                    className={`h-8 rounded-md px-3 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                      dataSourcePref === value ? "bg-paper text-ink shadow-sm" : "text-muted hover:text-ink"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <form
@@ -368,38 +402,27 @@ export function DiscoveryDashboard() {
           >
             <div className="relative flex-1">
               {mode === "keyword" ? (
-                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+                <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
               ) : (
-                <Link2 className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+                <Link2 className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
               )}
               <input
                 type={mode === "keyword" ? "text" : "url"}
                 value={mode === "keyword" ? query : postUrl}
                 onChange={(e) => (mode === "keyword" ? setQuery(e.target.value) : setPostUrl(e.target.value))}
-                placeholder={mode === "keyword" ? "e.g. K12 B2B Sales" : "https://www.linkedin.com/posts/..."}
+                placeholder={
+                  mode === "keyword" ? "e.g. K12 B2B Sales" : "linkedin.com/posts/... or lnkd.in/... link"
+                }
                 aria-label={mode === "keyword" ? "Search phrase" : "LinkedIn post URL"}
-                className={`h-12 w-full rounded-xl border border-line-strong bg-white pl-10 pr-4 text-ink placeholder:text-muted/70 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20 ${
+                className={`h-12 w-full rounded-xl border border-line-strong bg-white pl-11 pr-4 text-ink placeholder:text-muted/70 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20 ${
                   mode === "keyword" ? "text-base" : "font-mono text-sm"
                 }`}
               />
             </div>
-            {mode === "keyword" && (
-              <select
-                value={dataSourcePref}
-                onChange={(e) => setDataSourcePref(e.target.value as DataSourceMode)}
-                aria-label="Data source"
-                className="h-12 rounded-xl border border-line-strong bg-white px-3 text-sm font-medium text-ink focus:border-brand focus:outline-none"
-              >
-                <option value="authorized_provider" disabled={!hasLiveSearchKey}>
-                  Live data{hasLiveSearchKey ? "" : " (needs key)"}
-                </option>
-                <option value="labelled_test_dataset">Test dataset</option>
-              </select>
-            )}
             <button
               type="submit"
               disabled={loading}
-              className="inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-xl bg-brand px-6 text-sm font-bold text-white shadow-sm transition hover:bg-brand-ink disabled:opacity-60"
+              className="inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-xl bg-brand px-7 text-sm font-bold text-white shadow-sm transition hover:bg-brand-ink disabled:opacity-60"
             >
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
               {loading ? (isLiveRequest ? "Fetching live data…" : "Running…") : "Run discovery"}
@@ -461,56 +484,33 @@ export function DiscoveryDashboard() {
               {error}
             </div>
           )}
-
-          <ol className="mt-6 flex items-center gap-2 overflow-x-auto border-t border-line pt-4 text-[11px] font-medium text-muted">
-            {STAGES.map((stage, i) => {
-              const done = Boolean(result) && !loading;
-              return (
-                <li key={stage} className="flex shrink-0 items-center gap-2">
-                  <span
-                    className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
-                      done ? "bg-emerald-600 text-white" : loading ? "bg-brand-soft text-brand" : "bg-cream-2 text-muted"
-                    }`}
-                  >
-                    {done ? <Check className="h-3 w-3" /> : i + 1}
-                  </span>
-                  <span className={done ? "text-ink-soft" : ""}>{stage}</span>
-                  {i < STAGES.length - 1 && <span className="h-px w-5 bg-line-strong" aria-hidden />}
-                </li>
-              );
-            })}
-          </ol>
         </section>
 
-        {loading && !result && <LoadingState live={isLiveRequest} />}
+        {loading && <LoadingState live={isLiveRequest} hasResult={Boolean(result)} />}
 
         {result && (
           <>
-            {/* Run status */}
-            <section
-              className={`rounded-xl border px-4 py-3 text-sm ${
-                result.isTestData ? "border-amber-200 bg-amber-50/70" : "border-emerald-200 bg-emerald-50/70"
-              }`}
-            >
+            {/* 2. Run summary: the whole workflow as a funnel */}
+            <section className="rounded-2xl border border-line bg-paper p-5 shadow-sm sm:p-6">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-base font-bold text-ink">Run summary</h2>
                   <span
                     className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
-                      result.isTestData ? "bg-amber-200/70 text-amber-900" : "bg-emerald-200/70 text-emerald-900"
+                      result.isTestData ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-900"
                     }`}
                   >
-                    {result.isTestData ? "TEST DATA" : "LIVE DATA"}
+                    {result.isTestData ? "Test data" : "Live LinkedIn data"}
                   </span>
-                  <span className="text-ink-soft">
-                    {result.isTestData
-                      ? "Labelled test dataset: these are fixtures, not real LinkedIn records."
-                      : "Real LinkedIn data from authorised sources (no login or scraping)."}
+                  <span className="max-w-full truncate text-xs text-muted">
+                    for “{result.queryOrUrl.length > 60 ? `${result.queryOrUrl.slice(0, 60)}…` : result.queryOrUrl}”
                   </span>
                 </div>
                 <button
                   type="button"
                   onClick={() => setShowDetails((v) => !v)}
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-ink-soft hover:text-ink"
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-muted hover:text-ink"
+                  aria-expanded={showDetails}
                 >
                   {result.warnings.length > 0 && (
                     <span className="rounded-full bg-amber-500 px-1.5 text-[10px] font-bold text-white">
@@ -521,9 +521,36 @@ export function DiscoveryDashboard() {
                   <ChevronDown className={`h-3.5 w-3.5 transition ${showDetails ? "rotate-180" : ""}`} />
                 </button>
               </div>
+
+              <ol className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-5 sm:gap-0">
+                <FunnelStep n={result.stats.postsFound} label="Posts found" sub={result.inputMode === "keyword" ? "recent & relevant" : "direct link"} />
+                <FunnelStep n={result.stats.rawCommentsExtracted} label="Comments" sub="collected" />
+                <FunnelStep
+                  n={result.stats.uniqueCommenters}
+                  label="Commenters"
+                  sub={`${result.stats.deduplicatedDuplicatesRemoved} duplicates merged`}
+                  tone="text-teal-700"
+                />
+                <FunnelStep n={result.stats.lookalikesDiscovered} label="Lookalikes" sub="AI-discovered" tone="text-violet-700" />
+                <FunnelStep
+                  n={overlapCount === 0 ? "✓" : overlapCount}
+                  label="Kept separate"
+                  sub={overlapCount === 0 ? "no commenter in lookalikes" : "overlaps found"}
+                  tone={overlapCount === 0 ? "text-emerald-700" : "text-red-700"}
+                  last
+                />
+              </ol>
+
+              {result.isTestData && (
+                <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  These records are a clearly labelled test dataset, not real LinkedIn data. Choose <b>Live data</b> to
+                  run on real posts.
+                </p>
+              )}
+
               {showDetails && (
-                <div className="mt-3 space-y-2 border-t border-black/5 pt-3 text-xs text-ink-soft">
-                  <dl className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
+                <div className="mt-4 space-y-2 border-t border-line pt-4 text-xs text-ink-soft">
+                  <dl className="grid gap-x-8 gap-y-1.5 sm:grid-cols-2">
                     {(
                       [
                         ["Posts", result.providers.posts],
@@ -545,65 +572,52 @@ export function DiscoveryDashboard() {
                       ))}
                     </ul>
                   )}
+                  <p className="text-muted">
+                    No LinkedIn login or scraping: posts and profiles come from a public search index, comments from a
+                    licensed provider or your import.
+                  </p>
                 </div>
               )}
             </section>
 
-            {/* Stats */}
-            <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <Stat
-                label="Posts"
-                value={result.stats.postsFound}
-                hint={result.inputMode === "keyword" ? "recent & relevant" : "direct URL"}
-              />
-              <Stat
-                label="Commenters"
-                value={result.stats.uniqueCommenters}
-                hint={`${result.stats.deduplicatedDuplicatesRemoved} duplicates merged`}
-                accent="text-teal-700"
-              />
-              <Stat
-                label="Lookalikes"
-                value={result.stats.lookalikesDiscovered}
-                hint={`avg score ${result.stats.avgLookalikeScore}`}
-                accent="text-violet-700"
-              />
-              <Stat
-                label="Overlap check"
-                value={overlapCount === 0 ? "Clean" : overlapCount}
-                hint="no commenter shown as lookalike"
-                accent={overlapCount === 0 ? "text-emerald-700" : "text-red-700"}
-              />
-            </section>
-
-            {/* Posts */}
-            <section>
-              <SectionTitle title="Source posts" count={result.posts.length} />
-              <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {result.posts.map((post) => (
-                  <article key={post.id} className="flex flex-col rounded-xl border border-line bg-paper p-4">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <h3 className="truncate text-sm font-bold text-ink">{post.authorName}</h3>
-                        <p className="text-[11px] text-muted tabular-nums">
+            {/* 3. Source posts */}
+            <section className="rounded-2xl border border-line bg-paper p-5 shadow-sm sm:p-6">
+              <div className="flex items-baseline justify-between gap-2">
+                <h2 className="text-base font-bold text-ink">
+                  Source posts <span className="font-medium text-muted tabular-nums">{result.posts.length}</span>
+                </h2>
+                {result.posts.length > 3 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllPosts((v) => !v)}
+                    className="text-xs font-semibold text-brand hover:underline"
+                  >
+                    {showAllPosts ? "Show fewer" : `Show all ${result.posts.length}`}
+                  </button>
+                )}
+              </div>
+              <ul className="mt-3 divide-y divide-line">
+                {posts.map((post) => (
+                  <li key={post.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:gap-4">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-baseline gap-x-2">
+                        <span className="text-sm font-semibold text-ink">{post.authorName}</span>
+                        <span className="text-xs text-muted tabular-nums">
                           {post.publishedAt ? post.publishedAt.slice(0, 10) : "Date n/a"} ·{" "}
                           {post.engagementStats.comments} comment{post.engagementStats.comments === 1 ? "" : "s"}
-                        </p>
+                        </span>
                       </div>
-                      <span className="shrink-0 rounded-md bg-brand-soft px-1.5 py-0.5 text-[10px] font-bold text-brand-ink tabular-nums">
-                        {Math.round(post.relevanceToQuery * 100)}%
-                      </span>
+                      <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-ink-soft">{post.snippet}</p>
                     </div>
-                    <p className="mt-2 line-clamp-3 flex-1 text-xs leading-relaxed text-ink-soft">{post.snippet}</p>
-                    <div className="mt-3 flex items-center justify-between gap-2 border-t border-line pt-2.5">
+                    <div className="flex shrink-0 items-center gap-3 text-xs">
                       <a
                         href={post.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs font-semibold text-brand hover:underline"
+                        className="inline-flex items-center gap-1 font-semibold text-brand hover:underline"
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
-                        Open post
+                        Open
                       </a>
                       {result.inputMode === "keyword" && (
                         <button
@@ -613,39 +627,43 @@ export function DiscoveryDashboard() {
                             setPostUrl(post.url);
                             void executeDiscovery({ mode: "post_url", postUrl: post.url });
                           }}
-                          className="text-xs font-semibold text-ink-soft hover:text-ink"
+                          className="font-semibold text-muted hover:text-ink"
                         >
-                          Analyse only this →
+                          Analyse this post
                         </button>
                       )}
                     </div>
-                  </article>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </section>
 
-            {/* Results */}
-            <section className="space-y-4">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <div className="inline-flex self-start rounded-lg bg-cream-2 p-1" role="tablist" aria-label="Result lists">
+            {/* 4. Ranked prospects */}
+            <section className="overflow-hidden rounded-2xl border border-line bg-paper shadow-sm">
+              <div className="flex flex-col gap-3 border-b border-line p-4 sm:p-5 lg:flex-row lg:items-center lg:justify-between">
+                <div className="inline-flex self-start rounded-lg bg-cream-2 p-1" role="tablist" aria-label="Prospect lists">
                   {(
                     [
-                      ["both", "Both"],
-                      ["commenters", `Commenters (${commenters.length})`],
-                      ["lookalikes", `Lookalikes (${lookalikes.length})`],
+                      ["commenters", "Commenters", result.commenters.length, "bg-teal-600"],
+                      ["lookalikes", "Lookalikes", result.lookalikes.length, "bg-violet-600"],
                     ] as const
-                  ).map(([value, label]) => (
+                  ).map(([value, label, count, dot]) => (
                     <button
                       key={value}
                       type="button"
                       role="tab"
-                      aria-selected={track === value}
-                      onClick={() => setTrack(value)}
-                      className={`h-8 rounded-md px-3 text-xs font-semibold transition ${
-                        track === value ? "bg-paper text-ink shadow-sm" : "text-muted hover:text-ink"
+                      aria-selected={tab === value}
+                      onClick={() => {
+                        setTab(value);
+                        setVisible(PAGE_SIZE);
+                      }}
+                      className={`inline-flex h-9 items-center gap-2 rounded-md px-4 text-sm font-semibold transition ${
+                        tab === value ? "bg-paper text-ink shadow-sm" : "text-muted hover:text-ink"
                       }`}
                     >
+                      <span className={`h-2 w-2 rounded-full ${dot}`} />
                       {label}
+                      <span className="text-xs font-medium text-muted tabular-nums">{count}</span>
                     </button>
                   ))}
                 </div>
@@ -653,10 +671,13 @@ export function DiscoveryDashboard() {
                   <input
                     type="search"
                     value={textFilter}
-                    onChange={(e) => setTextFilter(e.target.value)}
-                    placeholder="Filter by name, org, city"
+                    onChange={(e) => {
+                      setTextFilter(e.target.value);
+                      setVisible(PAGE_SIZE);
+                    }}
+                    placeholder="Search name, org, city"
                     aria-label="Filter results"
-                    className="h-9 w-48 rounded-lg border border-line-strong bg-white px-3 text-xs focus:border-brand focus:outline-none"
+                    className="h-9 w-44 rounded-lg border border-line-strong bg-white px-3 text-xs focus:border-brand focus:outline-none"
                   />
                   <select
                     value={tierFilter}
@@ -670,76 +691,82 @@ export function DiscoveryDashboard() {
                     <option value="Adjacent EdTech Operator">Adjacent</option>
                     <option value="Low Fit">Low fit</option>
                   </select>
-                  <label className="flex h-9 items-center gap-2 rounded-lg border border-line-strong bg-white px-3 text-xs text-muted">
-                    Min score
-                    <input
-                      type="range"
-                      min={0}
-                      max={90}
-                      step={5}
-                      value={minScore}
-                      onChange={(e) => setMinScore(Number(e.target.value))}
-                      className="w-20 accent-[#006afe]"
-                    />
-                    <span className="w-5 font-semibold text-ink tabular-nums">{minScore}</span>
-                  </label>
+                  <select
+                    value={minScore}
+                    onChange={(e) => setMinScore(Number(e.target.value))}
+                    aria-label="Minimum score"
+                    className="h-9 rounded-lg border border-line-strong bg-white px-2 text-xs text-ink focus:border-brand focus:outline-none"
+                  >
+                    <option value={0}>Any score</option>
+                    <option value={40}>Score 40+</option>
+                    <option value={60}>Score 60+</option>
+                    <option value={80}>Score 80+</option>
+                  </select>
                 </div>
               </div>
 
-              <div className={`grid gap-6 ${track === "both" ? "lg:grid-cols-2" : ""}`}>
-                {track !== "lookalikes" && (
-                  <ResultColumn
-                    title="Commenters"
-                    subtitle="commented on the source posts"
-                    dot="bg-teal-600"
-                    empty={
-                      result.commenters.length === 0 ? (
-                        <>
-                          No commenters yet.{" "}
-                          <button
-                            type="button"
-                            onClick={() => setShowSettings(true)}
-                            className="font-semibold text-brand hover:underline"
-                          >
-                            Add an Apify token or import commenters
-                          </button>
-                          , then run again.
-                        </>
-                      ) : (
-                        "No commenters match the filters."
-                      )
-                    }
+              <p className="border-b border-line bg-cream/60 px-4 py-2 text-xs text-muted sm:px-5">
+                {tab === "commenters"
+                  ? "People who commented on the source posts, ranked by fit for EDXSO school-network outreach."
+                  : "Similar professionals discovered from the commenters. Each one shows which commenter it was matched to."}
+                {filtersActive && ` Showing ${activeList.length} of ${totalForTab}.`}
+              </p>
+
+              {activeList.length === 0 ? (
+                <div className="p-8 text-center text-sm text-muted">
+                  {totalForTab === 0 && tab === "commenters" ? (
+                    <>
+                      No commenters for this run.{" "}
+                      <button
+                        type="button"
+                        onClick={() => setShowSettings(true)}
+                        className="font-semibold text-brand hover:underline"
+                      >
+                        Add an Apify token or import commenters
+                      </button>
+                      , then run again.
+                    </>
+                  ) : totalForTab === 0 ? (
+                    "Lookalikes need at least one commenter to use as a seed."
+                  ) : (
+                    "No results match these filters."
+                  )}
+                </div>
+              ) : (
+                <ul className="divide-y divide-line">
+                  {tab === "commenters"
+                    ? commenters
+                        .slice(0, visible)
+                        .map((c, i) => (
+                          <CommenterRow key={c.id} c={c} rank={i + 1} copiedId={copiedId} onCopy={handleCopy} />
+                        ))
+                    : lookalikes
+                        .slice(0, visible)
+                        .map((l, i) => (
+                          <LookalikeRow key={l.id} l={l} rank={i + 1} copiedId={copiedId} onCopy={handleCopy} />
+                        ))}
+                </ul>
+              )}
+
+              {activeList.length > visible && (
+                <div className="border-t border-line p-3 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setVisible((v) => v + PAGE_SIZE)}
+                    className="rounded-lg px-4 py-2 text-sm font-semibold text-brand hover:bg-brand-soft"
                   >
-                    {commenters.map((c, i) => (
-                      <CommenterCard key={c.id} c={c} rank={i + 1} copiedId={copiedId} onCopy={handleCopy} />
-                    ))}
-                  </ResultColumn>
-                )}
-                {track !== "commenters" && (
-                  <ResultColumn
-                    title="Lookalikes"
-                    subtitle="similar professionals, found from commenters"
-                    dot="bg-violet-600"
-                    empty={
-                      result.lookalikes.length === 0
-                        ? "Lookalikes need at least one commenter to use as a seed."
-                        : "No lookalikes match the filters."
-                    }
-                  >
-                    {lookalikes.map((l, i) => (
-                      <LookalikeCard key={l.id} l={l} rank={i + 1} copiedId={copiedId} onCopy={handleCopy} />
-                    ))}
-                  </ResultColumn>
-                )}
-              </div>
+                    Show {Math.min(PAGE_SIZE, activeList.length - visible)} more ({activeList.length - visible} left)
+                  </button>
+                </div>
+              )}
             </section>
           </>
         )}
       </main>
 
-      <footer className="border-t border-line py-5 text-center text-xs text-muted">
-        EDXSO Prospect Discovery · Public search index, licensed provider and user-supplied data only. No LinkedIn login
-        or scraping.
+      <footer className="border-t border-line py-6 text-center text-xs text-muted">
+        EDXSO Prospect Discovery · Built with public search, a licensed comments provider and Gemini AI. No LinkedIn
+        login or scraping.
       </footer>
 
       <MethodologyModal
@@ -760,7 +787,7 @@ export function DiscoveryDashboard() {
   );
 }
 
-/* ---------- Small building blocks ---------- */
+/* ---------- Building blocks ---------- */
 
 function HeaderButton({
   onClick,
@@ -785,192 +812,50 @@ function HeaderButton({
   );
 }
 
-function Stat({
+function FunnelStep({
+  n,
   label,
-  value,
-  hint,
-  accent = "text-ink",
+  sub,
+  tone = "text-ink",
+  last = false,
 }: {
+  n: number | string;
   label: string;
-  value: number | string;
-  hint: string;
-  accent?: string;
+  sub: string;
+  tone?: string;
+  last?: boolean;
 }) {
   return (
-    <div className="rounded-xl border border-line bg-paper px-4 py-3.5">
-      <div className="text-xs font-medium text-muted">{label}</div>
-      <div className={`mt-0.5 text-2xl font-extrabold tabular-nums ${accent}`}>{value}</div>
-      <div className="text-[11px] text-muted">{hint}</div>
-    </div>
-  );
-}
-
-function SectionTitle({ title, count }: { title: string; count: number }) {
-  return (
-    <h2 className="flex items-baseline gap-2 text-base font-bold text-ink">
-      {title}
-      <span className="text-sm font-medium text-muted tabular-nums">{count}</span>
-    </h2>
-  );
-}
-
-function LoadingState({ live }: { live: boolean }) {
-  return (
-    <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-line-strong bg-paper/60 py-16 text-center">
-      <Loader2 className="h-6 w-6 animate-spin text-brand" />
-      <p className="mt-3 text-sm font-semibold text-ink">Running discovery…</p>
-      <p className="mt-1 text-xs text-muted">
-        {live
-          ? "Live runs take 20–40 seconds while posts, commenters and profiles are fetched."
-          : "This takes a few seconds."}
-      </p>
-    </div>
-  );
-}
-
-function ResultColumn({
-  title,
-  subtitle,
-  dot,
-  empty,
-  children,
-}: {
-  title: string;
-  subtitle: string;
-  dot: string;
-  empty: React.ReactNode;
-  children: React.ReactNode[];
-}) {
-  return (
-    <div className="min-w-0">
-      <div className="mb-3 flex flex-wrap items-baseline gap-x-2">
-        <span className={`h-2.5 w-2.5 self-center rounded-full ${dot}`} />
-        <h2 className="text-base font-bold text-ink">{title}</h2>
-        <span className="text-xs text-muted">{subtitle}</span>
-      </div>
-      {children.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-line-strong bg-paper/60 p-6 text-center text-sm text-muted">
-          {empty}
-        </div>
-      ) : (
-        <div className="space-y-3">{children}</div>
+    <li className="relative rounded-xl bg-cream px-4 py-3 sm:rounded-none sm:bg-transparent sm:px-3 sm:py-0 sm:text-center">
+      <div className={`text-2xl font-extrabold tabular-nums sm:text-3xl ${tone}`}>{n}</div>
+      <div className="text-xs font-semibold text-ink">{label}</div>
+      <div className="text-[11px] text-muted">{sub}</div>
+      {!last && (
+        <ArrowRight
+          className="absolute right-0 top-3 hidden h-4 w-4 translate-x-1/2 text-line-strong sm:block"
+          aria-hidden
+        />
       )}
-    </div>
+    </li>
   );
 }
 
-function CardShell({
-  rank,
-  name,
-  score,
-  badges,
-  role,
-  organization,
-  location,
-  url,
-  id,
-  copiedId,
-  onCopy,
-  indicators,
-  summary,
-  accent,
-  details,
-}: {
-  rank: number;
-  name: string;
-  score: number;
-  badges: React.ReactNode;
-  role: string;
-  organization: string;
-  location: string | null;
-  url: string;
-  id: string;
-  copiedId: string | null;
-  onCopy: (id: string, url: string) => void;
-  indicators: string[];
-  summary: React.ReactNode;
-  accent: string;
-  details: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  const shown = indicators.slice(0, 3);
-  const knownOrg = organization && !/not (provided|shown)/i.test(organization);
+function LoadingState({ live, hasResult }: { live: boolean; hasResult: boolean }) {
   return (
-    <article className="rounded-xl border border-line bg-paper p-4 transition hover:border-line-strong">
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className={`text-xs font-bold tabular-nums ${accent}`}>#{rank}</span>
-            <h3 className="text-[15px] font-bold text-ink">{name}</h3>
-            {badges}
-          </div>
-          <p className="mt-0.5 text-sm text-ink-soft">
-            {role}
-            {knownOrg && <span className="text-muted"> · {organization}</span>}
-          </p>
-          {location && (
-            <p className="mt-0.5 flex items-center gap-1 text-xs text-muted">
-              <MapPin className="h-3 w-3" />
-              {location}
-            </p>
-          )}
-        </div>
-        <ScorePill score={score} />
+    <div
+      className={`flex items-center justify-center gap-3 rounded-2xl border border-dashed border-line-strong bg-paper/70 text-center ${
+        hasResult ? "py-4" : "py-14"
+      }`}
+      role="status"
+    >
+      <Loader2 className="h-5 w-5 animate-spin text-brand" />
+      <div className="text-left">
+        <p className="text-sm font-semibold text-ink">Running discovery…</p>
+        <p className="text-xs text-muted">
+          {live ? "Live runs take 15–40 seconds: posts, commenters, lookalikes, then AI ranking." : "A few seconds."}
+        </p>
       </div>
-
-      <div className="mt-3 flex items-center gap-2 rounded-lg bg-cream px-2.5 py-1.5">
-        {url ? (
-          <>
-            <a
-              href={url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex min-w-0 flex-1 items-center gap-1 truncate font-mono text-[11px] text-brand hover:underline"
-            >
-              <ArrowUpRight className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">{url.replace("https://www.", "")}</span>
-            </a>
-            <button
-              type="button"
-              onClick={() => onCopy(id, url)}
-              className="inline-flex shrink-0 items-center gap-1 text-[11px] font-semibold text-muted hover:text-ink"
-              aria-label="Copy profile URL"
-            >
-              {copiedId === id ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
-              {copiedId === id ? "Copied" : "Copy"}
-            </button>
-          </>
-        ) : (
-          <span className="text-[11px] text-muted">Profile URL not available from this source</span>
-        )}
-      </div>
-
-      {shown.length > 0 && (
-        <div className="mt-2.5 flex flex-wrap gap-1">
-          {shown.map((tag) => (
-            <span key={tag} className="rounded-md bg-cream-2 px-1.5 py-0.5 text-[11px] font-medium text-ink-soft">
-              {tag}
-            </span>
-          ))}
-          {indicators.length > shown.length && (
-            <span className="px-1 py-0.5 text-[11px] text-muted">+{indicators.length - shown.length}</span>
-          )}
-        </div>
-      )}
-
-      {summary && <div className="mt-2.5 text-xs leading-relaxed text-ink-soft">{summary}</div>}
-
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-muted hover:text-ink"
-        aria-expanded={open}
-      >
-        {open ? "Hide details" : "Why this score"}
-        <ChevronDown className={`h-3.5 w-3.5 transition ${open ? "rotate-180" : ""}`} />
-      </button>
-      {open && <div className="mt-3 space-y-3 border-t border-line pt-3">{details}</div>}
-    </article>
+    </div>
   );
 }
 
@@ -996,7 +881,112 @@ function AiLine({ ai }: { ai?: AiClassification }) {
   );
 }
 
-function CommenterCard({
+/** One compact ranked row; details expand inline. */
+function ProspectRow({
+  rank,
+  rankTone,
+  name,
+  score,
+  badges,
+  role,
+  organization,
+  location,
+  url,
+  id,
+  copiedId,
+  onCopy,
+  secondary,
+  indicators,
+  details,
+}: {
+  rank: number;
+  rankTone: string;
+  name: string;
+  score: number;
+  badges: React.ReactNode;
+  role: string;
+  organization: string;
+  location: string | null;
+  url: string;
+  id: string;
+  copiedId: string | null;
+  onCopy: (id: string, url: string) => void;
+  secondary: React.ReactNode;
+  indicators: string[];
+  details: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const knownOrg = organization && !/not (provided|shown)/i.test(organization);
+  const meta = [knownOrg ? organization : null, location].filter(Boolean).join(" · ");
+  return (
+    <li className={`transition ${open ? "bg-cream/60" : "hover:bg-cream/40"}`}>
+      <div className="flex items-start gap-3 px-4 py-4 sm:gap-4 sm:px-5">
+        <span className={`w-6 shrink-0 pt-3 text-right text-xs font-bold tabular-nums ${rankTone}`}>{rank}</span>
+        <ScorePill score={score} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <h3 className="text-[15px] font-bold text-ink">{name}</h3>
+            {badges}
+          </div>
+          <p className="mt-0.5 line-clamp-1 text-sm text-ink-soft">{role}</p>
+          {meta && <p className="line-clamp-1 text-xs text-muted">{meta}</p>}
+          {secondary && <div className="mt-1.5 text-xs text-ink-soft">{secondary}</div>}
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+            {url ? (
+              <span className="inline-flex min-w-0 max-w-full items-center gap-1.5">
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex min-w-0 items-center gap-1 truncate font-mono text-[11px] text-brand hover:underline"
+                >
+                  <ArrowUpRight className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{url.replace("https://www.", "")}</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => onCopy(id, url)}
+                  className="shrink-0 text-muted hover:text-ink"
+                  aria-label="Copy profile URL"
+                  title="Copy profile URL"
+                >
+                  {copiedId === id ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                </button>
+              </span>
+            ) : (
+              <span className="text-[11px] text-muted">Profile URL not available from this source</span>
+            )}
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-muted hover:text-ink"
+              aria-expanded={open}
+            >
+              {open ? "Hide details" : "Why this score"}
+              <ChevronDown className={`h-3 w-3 transition ${open ? "rotate-180" : ""}`} />
+            </button>
+          </div>
+          {open && (
+            <div className="mt-3 space-y-3 rounded-xl border border-line bg-paper p-4">
+              {indicators.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {indicators.map((tag) => (
+                    <span key={tag} className="rounded-md bg-cream-2 px-1.5 py-0.5 text-[11px] font-medium text-ink-soft">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {details}
+            </div>
+          )}
+        </div>
+      </div>
+    </li>
+  );
+}
+
+function CommenterRow({
   c,
   rank,
   copiedId,
@@ -1009,11 +999,11 @@ function CommenterCard({
 }) {
   const firstComment = c.comments.find((m) => m.text)?.text;
   return (
-    <CardShell
+    <ProspectRow
       rank={rank}
+      rankTone="text-teal-700"
       name={c.name}
       score={c.relevanceScore}
-      accent="text-teal-700"
       badges={
         <>
           <TierBadge tier={c.personaTier} />
@@ -1033,7 +1023,7 @@ function CommenterCard({
       copiedId={copiedId}
       onCopy={onCopy}
       indicators={c.schoolEcosystemIndicators}
-      summary={firstComment ? <p className="line-clamp-2 italic">“{firstComment}”</p> : null}
+      secondary={firstComment ? <p className="line-clamp-1 italic text-muted">“{firstComment}”</p> : null}
       details={
         <>
           <BreakdownBars breakdown={c.scoreBreakdown} />
@@ -1065,7 +1055,7 @@ function CommenterCard({
   );
 }
 
-function LookalikeCard({
+function LookalikeRow({
   l,
   rank,
   copiedId,
@@ -1078,11 +1068,11 @@ function LookalikeCard({
 }) {
   const top = l.seedProfiles[0];
   return (
-    <CardShell
+    <ProspectRow
       rank={rank}
+      rankTone="text-violet-700"
       name={l.name}
       score={l.relevanceScore}
-      accent="text-violet-700"
       badges={
         <>
           <TierBadge tier={l.personaTier} />
@@ -1097,12 +1087,12 @@ function LookalikeCard({
       copiedId={copiedId}
       onCopy={onCopy}
       indicators={l.schoolEcosystemIndicators}
-      summary={
+      secondary={
         top ? (
           <p>
-            <span className="font-semibold text-violet-700 tabular-nums">{l.similarityScore}% similar</span> to{" "}
+            <span className="font-semibold text-violet-700 tabular-nums">{l.similarityScore}% similar</span> to commenter{" "}
             <span className="font-semibold text-ink">{top.seedCommenterName}</span>
-            {l.seedProfiles.length > 1 && <span className="text-muted"> and {l.seedProfiles.length - 1} more</span>}
+            {l.seedProfiles.length > 1 && <span className="text-muted"> +{l.seedProfiles.length - 1} more</span>}
           </p>
         ) : null
       }
@@ -1112,7 +1102,7 @@ function LookalikeCard({
           <AiLine ai={l.aiClassification} />
           <p className="text-xs leading-relaxed text-ink-soft">{l.relevanceExplanation}</p>
           <div>
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">Seed commenters</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">Matched to commenters</div>
             <ul className="mt-1.5 space-y-1 text-xs text-ink-soft">
               {l.seedProfiles.map((s) => (
                 <li key={s.seedCommenterId}>

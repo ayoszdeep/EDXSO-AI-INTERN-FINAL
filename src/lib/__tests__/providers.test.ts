@@ -362,3 +362,82 @@ test("CSV export neutralises spreadsheet formulas from external text", async () 
   assert.ok(csv.includes(`"'=HYPERLINK(""http://evil"")"`));
   assert.ok(!/,=HYPERLINK/.test(csv));
 });
+
+// ---------- Short links and share-style post URLs ----------
+
+test("share- URLs: Apify comments are attributed via the echoed input URL", () => {
+  const sharePost = {
+    ...fakePost("7531569171604758528"),
+    url: "https://www.linkedin.com/posts/rajni_hiring-share-7531569171604758528-a44O",
+    canonicalUrl: "https://www.linkedin.com/posts/rajni_hiring-share-7531569171604758528-a44o",
+  };
+  const other = fakePost("7300000000000000001");
+  const records = mapApifyComments(
+    [
+      {
+        type: "comment",
+        postId: "urn:li:activity:7531569174381457408", // activity id differs from the share id
+        linkedinUrl: "https://www.linkedin.com/feed/update/urn:li:activity:7531569174381457408?commentUrn=x",
+        query: { post: "https://www.linkedin.com/posts/rajni_hiring-share-7531569171604758528-a44O" },
+        commentary: "Interested",
+        actor: { name: "A Person", linkedinUrl: "https://www.linkedin.com/in/a-person" },
+      },
+    ],
+    [other, sharePost]
+  );
+  assert.equal(records.length, 1);
+  assert.equal(records[0].postId, sharePost.id);
+});
+
+test("lnkd.in short links are expanded from the redirect header only", async () => {
+  const { expandLinkedInShortLink, isLinkedInShortLink } = await import("../data/linkedin-urls");
+  assert.equal(isLinkedInShortLink("https://lnkd.in/p/g-YzbFzC"), true);
+  assert.equal(isLinkedInShortLink("https://www.linkedin.com/posts/x"), false);
+
+  const realFetch = globalThis.fetch;
+  const seen: Array<{ url: string; method?: string; redirect?: string }> = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    seen.push({ url: String(input), method: init?.method, redirect: init?.redirect });
+    return new Response(null, {
+      status: 301,
+      headers: {
+        location:
+          "https://www.linkedin.com/posts/rajni_hiring-share-7531569171604758528-a44O/?utm_source=share&rcm=ACoAAF2",
+      },
+    });
+  }) as typeof fetch;
+  try {
+    const expanded = await expandLinkedInShortLink("https://lnkd.in/p/g-YzbFzC");
+    assert.equal(expanded, "https://www.linkedin.com/posts/rajni_hiring-share-7531569171604758528-a44O");
+    assert.equal(seen.length, 1, "only the short link is requested; the LinkedIn page is never fetched");
+    assert.equal(seen[0].method, "HEAD");
+    assert.equal(seen[0].redirect, "manual");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("provider text with broken HTML entities is decoded; share- slugs give clean topics", async () => {
+  const { decodeHtmlText, inferTopicsFromPostUrl } = await import("../data/linkedin-urls");
+  assert.equal(decodeHtmlText("Full-Stack amp; Backend"), "Full-Stack & Backend");
+  assert.equal(decodeHtmlText("R&amp;D &quot;lead&quot; &#39;x&#39;"), `R&D "lead" 'x'`);
+  assert.deepEqual(
+    inferTopicsFromPostUrl("https://www.linkedin.com/posts/rajni_hiring-internship-share-7531569171604758528-a44O"),
+    ["hiring", "internship"]
+  );
+});
+
+test("non-school seeds still produce role-based lookalike queries", () => {
+  const seed = {
+    id: "commenter-1",
+    name: "Dev Seed",
+    currentRole: "Java Backend Developer (Spring)",
+    headline: "Java Backend Developer (Spring) | Microservices",
+    location: null,
+    schoolEcosystemIndicators: [],
+    relevanceScore: 12,
+  } as unknown as AnalyzedCommenter;
+  const qs = buildLookalikeQueries([seed]);
+  assert.equal(qs.length, 1);
+  assert.ok(qs[0].query.includes('"Java Backend Developer"'), qs[0].query);
+});

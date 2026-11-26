@@ -7,6 +7,7 @@ import {
   activityIdToDate,
   canonicalizeLinkedInUrl,
   cleanLinkedInUrl,
+  decodeHtmlText,
   extractActivityId,
   extractPostAuthorHandle,
   inferTopicsFromPostUrl,
@@ -269,12 +270,12 @@ export function parseProfileHit(
   provenance: DiscoveryProvenance
 ): CandidateProfileRecord | null {
   if (!isValidLinkedInProfileUrl(hit.link)) return null;
-  const title = hit.title.replace(/\s*\|\s*LinkedIn.*$/i, "").replace(/\s+/g, " ").trim();
+  const title = decodeHtmlText(hit.title.replace(/\s*\|\s*LinkedIn.*$/i, ""));
   const parts = title.split(/\s[-–—]\s/).map((p) => p.trim()).filter(Boolean);
   const name = parts[0] ?? "";
   if (!name || name.length > 80 || /linkedin/i.test(name)) return null;
 
-  const snippet = hit.snippet.replace(/\s+/g, " ").trim();
+  const snippet = decodeHtmlText(hit.snippet);
   const experience = snippet.match(/Experience:\s*([^·|]+)/i)?.[1]?.trim() ?? "";
   const location = snippet.match(/Location:\s*([^·|]+)/i)?.[1]?.trim() ?? null;
   const trimDots = (v: string) => v.replace(/\s*(\.{3}|…)\s*$/, "").trim();

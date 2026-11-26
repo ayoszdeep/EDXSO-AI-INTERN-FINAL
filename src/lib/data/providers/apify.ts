@@ -1,6 +1,8 @@
 import { LinkedInPost, RawCommentRecord } from "@/lib/types";
 import {
+  canonicalizeLinkedInUrl,
   cleanLinkedInUrl,
+  decodeHtmlText,
   extractActivityId,
   isValidLinkedInProfileUrl,
   splitHeadline,
@@ -111,7 +113,7 @@ export function mapApifyComments(items: ApifyCommentItem[], posts: LinkedInPost[
   const records: RawCommentRecord[] = [];
   items.forEach((item, idx) => {
     if (item.type && item.type !== "comment") return;
-    const name = (item.actor?.name ?? item.author?.name ?? "").trim();
+    const name = decodeHtmlText(item.actor?.name ?? item.author?.name ?? "");
     const rawProfile =
       item.actor?.linkedinUrl ?? item.author?.linkedinUrl ?? item.author?.profileUrl ?? "";
     if (!name) return;
@@ -128,10 +130,15 @@ export function mapApifyComments(items: ApifyCommentItem[], posts: LinkedInPost[
         break;
       }
     }
+    // The provider echoes the input URL; "share-" URLs carry a share id that differs from the activity id
+    if (!post && queryPost) {
+      const canonicalQuery = canonicalizeLinkedInUrl(queryPost);
+      post = posts.find((p) => p.canonicalUrl === canonicalQuery || canonicalizeLinkedInUrl(p.url) === canonicalQuery);
+    }
     if (!post && posts.length === 1) post = posts[0];
     if (!post) return; // cannot trace to a source post -> do not guess
 
-    const headline = (item.actor?.position ?? item.actor?.headline ?? item.author?.headline ?? "").trim();
+    const headline = decodeHtmlText(item.actor?.position ?? item.actor?.headline ?? item.author?.headline ?? "");
     const split = splitHeadline(headline);
     records.push({
       commentId: item.id ? `apify-${item.id}` : `apify-${idx + 1}`,
@@ -143,7 +150,7 @@ export function mapApifyComments(items: ApifyCommentItem[], posts: LinkedInPost[
       currentRole: split.role || "Role not provided",
       organization: split.organization || "Organization not provided",
       location: null,
-      commentText: (item.commentary ?? item.text ?? item.comment ?? "").trim(),
+      commentText: decodeHtmlText(item.commentary ?? item.text ?? item.comment ?? ""),
       commentedAt: item.createdAt ?? post.publishedAt,
       experienceSummary: headline,
       skills: [],

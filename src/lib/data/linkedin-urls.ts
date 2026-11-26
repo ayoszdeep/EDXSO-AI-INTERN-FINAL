@@ -49,6 +49,54 @@ export function isValidLinkedInPostUrl(rawUrl: string): boolean {
   );
 }
 
+/**
+ * Decodes HTML entities in provider/search text, including the broken form
+ * some providers emit where the "&" was already stripped ("Full-Stack amp; Backend").
+ */
+export function decodeHtmlText(raw: string): string {
+  return (raw ?? "")
+    .replace(/&amp;|(?<=\s|^)amp;/g, "&")
+    .replace(/&lt;|(?<=\s|^)lt;/g, "<")
+    .replace(/&gt;|(?<=\s|^)gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0*39;|&apos;|&#x27;/gi, "'")
+    .replace(/&#(\d+);/g, (_, n: string) => String.fromCodePoint(Number(n)))
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** LinkedIn's official URL shortener, e.g. https://lnkd.in/p/g-YzbFzC */
+export function isLinkedInShortLink(rawUrl: string): boolean {
+  try {
+    const u = new URL(/^https?:\/\//i.test(rawUrl.trim()) ? rawUrl.trim() : `https://${rawUrl.trim()}`);
+    return u.hostname.toLowerCase() === "lnkd.in";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Expands an lnkd.in short link by reading only the HTTP redirect target
+ * (Location header). The destination page itself is never downloaded, so this
+ * is link expansion, not scraping. Returns null if it doesn't lead to linkedin.com.
+ */
+export async function expandLinkedInShortLink(rawUrl: string): Promise<string | null> {
+  let current = /^https?:\/\//i.test(rawUrl.trim()) ? rawUrl.trim() : `https://${rawUrl.trim()}`;
+  for (let hop = 0; hop < 4; hop++) {
+    if (!isLinkedInShortLink(current)) break;
+    const res = await fetch(current, {
+      method: "HEAD",
+      redirect: "manual",
+      signal: AbortSignal.timeout(8000),
+    });
+    const location = res.headers.get("location");
+    if (!location || res.status < 300 || res.status >= 400) return null;
+    current = new URL(location, current).toString();
+  }
+  return /^https:\/\/([a-z]+\.)?linkedin\.com\//i.test(current) ? cleanLinkedInUrl(current) : null;
+}
+
 export function isValidLinkedInProfileUrl(rawUrl: string): boolean {
   const canonical = canonicalizeLinkedInUrl(rawUrl);
   return /^https:\/\/www\.linkedin\.com\/in\/[^/]+$/.test(canonical);
@@ -104,7 +152,7 @@ export function inferTopicsFromPostUrl(url: string): string[] {
     const slug = parsed.pathname
       .replace(/^\/posts\/[^_/]+_/i, "")
       .replace(/^\/posts\//i, "")
-      .replace(/activity-\d+.*/i, "")
+      .replace(/(activity|share|ugcpost)-\d+.*/i, "")
       .replace(/^\/feed\/update\/.*/i, "");
     const words = slug
       .split(/[-_/]+/)
