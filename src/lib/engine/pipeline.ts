@@ -1,6 +1,11 @@
 import { retrieveCompliantData } from "@/lib/data/compliant-provider";
 import { canonicalizeLinkedInUrl } from "@/lib/data/linkedin-urls";
-import { hasSearchKey, searchLinkedInProfiles, searchProviderName } from "@/lib/data/providers/web-search";
+import {
+  enrichProfileAvatars,
+  hasSearchKey,
+  searchLinkedInProfiles,
+  searchProviderName,
+} from "@/lib/data/providers/web-search";
 import { deduplicateCommenters } from "@/lib/engine/deduplicator";
 import { discoverLookalikes } from "@/lib/engine/lookalike";
 import { buildLookalikeQueries } from "@/lib/engine/lookalike-sourcing";
@@ -141,6 +146,16 @@ export async function runDiscoveryPipeline(request: DiscoveryRequest): Promise<D
   lookalikes = [...lookalikes]
     .sort((a, b) => b.relevanceScore - a.relevanceScore || b.similarityScore - a.similarityScore)
     .slice(0, request.maxLookalikes ?? 12);
+
+  // Stage 6b: enrich missing profile pictures from the public search index for live runs
+  if (!source.isTestData && source.searchKeys.serperApiKey) {
+    const [enrichedCommenters, enrichedLookalikes] = await Promise.all([
+      enrichProfileAvatars(commenters, source.searchKeys),
+      enrichProfileAvatars(lookalikes, source.searchKeys),
+    ]);
+    commenters = enrichedCommenters;
+    lookalikes = enrichedLookalikes;
+  }
 
   const avg = (xs: number[]) => (xs.length > 0 ? Math.round(xs.reduce((s, x) => s + x, 0) / xs.length) : 0);
 

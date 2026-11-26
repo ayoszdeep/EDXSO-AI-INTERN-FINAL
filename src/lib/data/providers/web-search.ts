@@ -6,6 +6,7 @@ import {
 import {
   activityIdToDate,
   canonicalizeLinkedInUrl,
+  cleanAvatarUrl,
   cleanLinkedInUrl,
   decodeHtmlText,
   extractActivityId,
@@ -33,9 +34,12 @@ export interface SearchHit {
   link: string;
   snippet: string;
   date?: string;
+  imageUrl?: string;
+  thumbnailUrl?: string;
 }
 
 const searchCache = new TtlCache<SearchHit[]>(30 * 60 * 1000);
+const avatarCache = new TtlCache<string>(60 * 60 * 1000, 300);
 
 export function resolveSearchKeys(keys?: SearchKeys): SearchKeys {
   return {
@@ -81,11 +85,25 @@ export async function webSearch(
       );
     }
     const data = (await response.json()) as {
-      organic?: Array<{ title?: string; link?: string; snippet?: string; date?: string }>;
+      organic?: Array<{
+        title?: string;
+        link?: string;
+        snippet?: string;
+        date?: string;
+        imageUrl?: string;
+        thumbnailUrl?: string;
+      }>;
     };
     hits = (data.organic ?? [])
       .filter((o) => o.link)
-      .map((o) => ({ title: o.title ?? "", link: o.link!, snippet: o.snippet ?? "", date: o.date }));
+      .map((o) => ({
+        title: o.title ?? "",
+        link: o.link!,
+        snippet: o.snippet ?? "",
+        date: o.date,
+        imageUrl: o.imageUrl,
+        thumbnailUrl: o.thumbnailUrl,
+      }));
   } else if (keys.tavilyApiKey) {
     const response = await fetch("https://api.tavily.com/search", {
       method: "POST",
@@ -295,6 +313,7 @@ export function parseProfileHit(
     id: `cand-${canonicalizeLinkedInUrl(hit.link).split("/in/")[1]}`,
     name,
     linkedinUrl: cleanLinkedInUrl(hit.link),
+    avatarUrl: cleanAvatarUrl(hit.thumbnailUrl) ?? cleanAvatarUrl(hit.imageUrl),
     headline: headline || role,
     currentRole: role || "Role not shown in index",
     organization: organization || "Organization not shown in index",
@@ -349,4 +368,101 @@ export async function searchLinkedInProfiles(
     throw first?.reason instanceof Error ? first.reason : new Error("Profile search failed.");
   }
   return Array.from(byUrl.values());
+}
+
+const MAX_AVATAR_LOOKUPS_PER_RUN = 15;
+const AVATAR_BATCH_SIZE = 5;
+
+async function lookupSingleProfileAvatar(
+  canonicalUrl: string,
+  name: string,
+  serperApiKey: string
+): Promise<string | undefined> {
+  const cached = avatarCache.get(canonicalUrl);
+  if (cached !== undefined) return cached || undefined;
+
+  const slug = canonicalUrl.split("/in/")[1] ?? "";
+  if (!slug) return undefined;
+
+  // Opaque member-id slugs (/in/ACoAA...) are rarely indexed by slug; match by name + strict URL check.
+  const query = /^acoa/i.test(slug) && name ? `site:linkedin.com/in "${name}"` : `site:linkedin.com/in/${slug}`;
+
+  try {
+    const response = await fetch("https://google.serper.dev/images", {
+      method: "POST",
+      headers: { "X-API-KEY": serperApiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ q: query, num: 5 }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) return undefined;
+
+    const data = (await response.json()) as {
+      images?: Array<{ link?: string; imageUrl?: string; thumbnailUrl?: string }>;
+    };
+    const match = (data.images ?? []).find(
+      (img) =>
+        img.link &&
+        isValidLinkedInProfileUrl(img.link) &&
+        canonicalizeLinkedInUrl(img.link) === canonicalUrl &&
+        Boolean(cleanAvatarUrl(img.thumbnailUrl) ?? cleanAvatarUrl(img.imageUrl))
+    );
+    const avatar = match
+      ? cleanAvatarUrl(match.thumbnailUrl) ?? cleanAvatarUrl(match.imageUrl)
+      : undefined;
+    avatarCache.set(canonicalUrl, avatar ?? "");
+    return avatar;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Fetches publicly indexed profile pictures from Serper Images for live
+ * profiles missing an avatar, matching strictly on canonical `/in/<slug>` URL.
+ * Non-blocking: failures leave `avatarUrl` undefined without affecting discovery.
+ */
+export async function enrichProfileAvatars<
+  T extends { name: string; linkedinUrl: string; canonicalLinkedinUrl: string; avatarUrl?: string },
+>(profiles: T[], keys: SearchKeys): Promise<T[]> {
+  const serperApiKey = keys.serperApiKey;
+  if (!serperApiKey || profiles.length === 0) return profiles;
+
+  const targets = new Map<string, string>();
+  for (const p of profiles) {
+    if (p.avatarUrl) continue;
+    const canonical = p.canonicalLinkedinUrl || canonicalizeLinkedInUrl(p.linkedinUrl);
+    if (!canonical || !isValidLinkedInProfileUrl(canonical) || /\/in\/test-fixture-/i.test(canonical)) {
+      continue;
+    }
+    if (!targets.has(canonical)) {
+      targets.set(canonical, p.name);
+      if (targets.size >= MAX_AVATAR_LOOKUPS_PER_RUN) break;
+    }
+  }
+  if (targets.size === 0) return profiles;
+
+  const resolved = new Map<string, string>();
+  const entries = Array.from(targets.entries());
+  for (let i = 0; i < entries.length; i += AVATAR_BATCH_SIZE) {
+    const batch = entries.slice(i, i + AVATAR_BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map(async ([canonical, name]) => ({
+        canonical,
+        avatar: await lookupSingleProfileAvatar(canonical, name, serperApiKey),
+      }))
+    );
+    for (const r of results) {
+      if (r.status === "fulfilled" && r.value.avatar) {
+        resolved.set(r.value.canonical, r.value.avatar);
+      }
+    }
+  }
+
+  if (resolved.size === 0) return profiles;
+  return profiles.map((p) => {
+    if (p.avatarUrl) return p;
+    const canonical = p.canonicalLinkedinUrl || canonicalizeLinkedInUrl(p.linkedinUrl);
+    const avatar = resolved.get(canonical);
+    return avatar ? { ...p, avatarUrl: avatar } : p;
+  });
 }

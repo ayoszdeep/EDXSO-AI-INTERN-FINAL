@@ -881,11 +881,88 @@ function AiLine({ ai }: { ai?: AiClassification }) {
   );
 }
 
+const AVATAR_TONES = [
+  "bg-teal-100 text-teal-800 ring-teal-200",
+  "bg-blue-100 text-blue-800 ring-blue-200",
+  "bg-violet-100 text-violet-800 ring-violet-200",
+  "bg-amber-100 text-amber-800 ring-amber-200",
+  "bg-emerald-100 text-emerald-800 ring-emerald-200",
+  "bg-rose-100 text-rose-800 ring-rose-200",
+];
+
+function initialsFor(name: string): string {
+  const parts = name
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\b(dr|mr|mrs|ms|prof)\.?\b/gi, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+}
+
+function avatarToneFor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  return AVATAR_TONES[hash % AVATAR_TONES.length];
+}
+
+function ProfileAvatar({
+  name,
+  avatarUrl,
+  profileUrl,
+}: {
+  name: string;
+  avatarUrl?: string;
+  profileUrl?: string;
+}) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const showImage = Boolean(avatarUrl && failedUrl !== avatarUrl);
+  const inner = showImage ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={avatarUrl}
+      alt={name}
+      referrerPolicy="no-referrer"
+      loading="lazy"
+      onError={() => setFailedUrl(avatarUrl ?? null)}
+      className="h-full w-full object-cover"
+    />
+  ) : (
+    <span className="text-xs font-bold tracking-tight select-none">{initialsFor(name)}</span>
+  );
+
+  const cls = `flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full ring-1 sm:h-12 sm:w-12 ${
+    showImage ? "bg-cream-2 ring-line" : avatarToneFor(name)
+  }`;
+
+  if (profileUrl) {
+    return (
+      <a
+        href={profileUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={`${name} — Open LinkedIn profile`}
+        className={`${cls} transition hover:ring-brand`}
+      >
+        {inner}
+      </a>
+    );
+  }
+  return (
+    <div className={cls} aria-hidden>
+      {inner}
+    </div>
+  );
+}
+
 /** One compact ranked row; details expand inline. */
 function ProspectRow({
   rank,
   rankTone,
   name,
+  avatarUrl,
   score,
   badges,
   role,
@@ -902,6 +979,7 @@ function ProspectRow({
   rank: number;
   rankTone: string;
   name: string;
+  avatarUrl?: string;
   score: number;
   badges: React.ReactNode;
   role: string;
@@ -923,6 +1001,7 @@ function ProspectRow({
       <div className="flex items-start gap-3 px-4 py-4 sm:gap-4 sm:px-5">
         <span className={`w-6 shrink-0 pt-3 text-right text-xs font-bold tabular-nums ${rankTone}`}>{rank}</span>
         <ScorePill score={score} />
+        <ProfileAvatar name={name} avatarUrl={avatarUrl} profileUrl={url} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
             <h3 className="text-[15px] font-bold text-ink">{name}</h3>
@@ -1003,6 +1082,7 @@ function CommenterRow({
       rank={rank}
       rankTone="text-teal-700"
       name={c.name}
+      avatarUrl={c.avatarUrl}
       score={c.relevanceScore}
       badges={
         <>
@@ -1072,6 +1152,7 @@ function LookalikeRow({
       rank={rank}
       rankTone="text-violet-700"
       name={l.name}
+      avatarUrl={l.avatarUrl}
       score={l.relevanceScore}
       badges={
         <>

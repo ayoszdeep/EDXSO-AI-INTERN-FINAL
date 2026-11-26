@@ -56,6 +56,7 @@ export interface RawCommentRecord {
   postUrl: string;
   authorName: string;
   authorProfileUrl: string;
+  avatarUrl?: string;
   headline: string;
   currentRole: string;
   organization: string;
@@ -73,6 +74,7 @@ export interface CandidateProfileRecord {
   id: string;
   name: string;
   linkedinUrl: string;
+  avatarUrl?: string;
   headline: string;
   currentRole: string;
   organization: string;
@@ -107,6 +109,7 @@ export interface AnalyzedCommenter {
   name: string;
   linkedinUrl: string;
   canonicalLinkedinUrl: string;
+  avatarUrl?: string;
   headline: string;
   currentRole: string;
   organization: string;
@@ -141,6 +144,7 @@ export interface LookalikeProfile {
   name: string;
   linkedinUrl: string;
   canonicalLinkedinUrl: string;
+  avatarUrl?: string;
   headline: string;
   currentRole: string;
   organization: string;
@@ -166,6 +170,7 @@ export interface ImportedCommenter {
   name: string;
   /** Empty string when the source (e.g. copied page text) carried no profile link. */
   linkedinUrl: string;
+  avatarUrl?: string;
   currentRole?: string;
   organization?: string;
   location?: string;

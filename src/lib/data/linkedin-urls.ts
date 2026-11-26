@@ -183,3 +183,34 @@ export function splitHeadline(headline: string): {
   // so without an explicit "at"/"@" the organisation stays unknown rather than guessed.
   return { role: firstSegment, organization: "" };
 }
+
+const IGNORED_AVATAR_PATTERNS = [
+  /static\.licdn\.com\/.*(?:ghost|person|default|silhouette|anonymous)/i,
+  /ghost-person/i,
+  /linkedin\.com\/favicon/i,
+];
+
+/**
+ * Validates and extracts an HTTP(S) profile-picture URL from string or
+ * provider `{ url }` objects. Filters out LinkedIn's generic ghost placeholders.
+ */
+export function cleanAvatarUrl(raw: unknown): string | undefined {
+  let candidate = "";
+  if (typeof raw === "string") {
+    candidate = raw.trim();
+  } else if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    if (typeof obj.url === "string") candidate = obj.url.trim();
+    else if (typeof obj.imageUrl === "string") candidate = obj.imageUrl.trim();
+    else if (typeof obj.rootUrl === "string") candidate = obj.rootUrl.trim();
+  }
+  if (!candidate) return undefined;
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return undefined;
+    if (IGNORED_AVATAR_PATTERNS.some((re) => re.test(candidate))) return undefined;
+    return parsed.toString();
+  } catch {
+    return undefined;
+  }
+}
