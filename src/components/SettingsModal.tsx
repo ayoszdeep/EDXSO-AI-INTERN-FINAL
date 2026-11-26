@@ -57,7 +57,7 @@ function KeyField({
 }) {
   return (
     <label className="block">
-      <span className="flex items-center justify-between gap-2 text-xs font-semibold text-slate-700">
+      <span className="flex items-center justify-between gap-2 text-xs font-semibold text-ink-soft">
         {label}
         {serverConfigured && (
           <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
@@ -71,9 +71,9 @@ function KeyField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={serverConfigured ? "Using server key (optional override)" : placeholder}
-        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+        className="mt-1 w-full rounded-lg border border-line-strong px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
       />
-      <span className="mt-0.5 block text-[11px] text-slate-500">{hint}</span>
+      <span className="mt-0.5 block text-[11px] text-muted">{hint}</span>
     </label>
   );
 }
@@ -130,22 +130,22 @@ export function SettingsModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[#17233B]/45 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-label="Data providers and commenter import"
     >
-      <div className="relative max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_24px_64px_-16px_rgba(23,35,59,0.22)] sm:p-8">
+      <div className="relative max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-line bg-paper p-6 shadow-2xl sm:p-8">
         <button
           onClick={onClose}
-          className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+          className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-lg text-muted transition hover:bg-cream-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
           aria-label="Close settings"
         >
           <X className="h-5 w-5" />
         </button>
 
-        <h2 className="text-xl font-bold text-[#17233B]">Data Providers & Commenter Import</h2>
-        <p className="mt-1 text-sm text-slate-600">
+        <h2 className="text-xl font-bold text-ink">Data Providers & Commenter Import</h2>
+        <p className="mt-1 text-sm text-muted">
           Live runs use authorised sources only: a public search index for posts and profiles, a licensed
           provider for public comments, and exports you supply. LinkedIn is never logged into or scraped.
         </p>
@@ -160,8 +160,8 @@ export function SettingsModal({
         </div>
 
         <div className="mt-6">
-          <h3 className="flex items-center gap-2 text-sm font-bold text-[#17233B]">
-            <KeyRound className="h-4 w-4 text-blue-700" />
+          <h3 className="flex items-center gap-2 text-sm font-bold text-ink">
+            <KeyRound className="h-4 w-4 text-brand" />
             Provider Keys
           </h3>
           <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -200,13 +200,13 @@ export function SettingsModal({
           </div>
         </div>
 
-        <div className="mt-6 border-t border-slate-200 pt-5">
+        <div className="mt-6 border-t border-line pt-5">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="flex items-center gap-2 text-sm font-bold text-[#17233B]">
+            <h3 className="flex items-center gap-2 text-sm font-bold text-ink">
               <Upload className="h-4 w-4 text-teal-700" />
               Import Commenters (any post URL)
             </h3>
-            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-line-strong px-3 py-1.5 text-xs font-semibold text-ink-soft hover:bg-cream-2">
               <FileUp className="h-3.5 w-3.5" />
               Upload CSV / JSON / TXT
               <input
@@ -217,9 +217,9 @@ export function SettingsModal({
               />
             </label>
           </div>
-          <p className="mt-1 text-xs text-slate-600">
+          <p className="mt-1 text-xs text-muted">
             In <b>Direct Post URL</b> mode every row is attributed to that post. In <b>Keyword</b> mode add a{" "}
-            <code className="rounded bg-slate-100 px-1 font-mono text-[11px]">post_url</code> column so each
+            <code className="rounded bg-cream-2 px-1 font-mono text-[11px]">post_url</code> column so each
             comment is traced to the discovered post it belongs to.
           </p>
           <textarea
@@ -228,16 +228,16 @@ export function SettingsModal({
             onChange={(e) => setLocalRaw(e.target.value)}
             placeholder={FORMAT_HELP}
             aria-label="Commenter import data"
-            className="mt-2 w-full rounded-xl border border-slate-300 p-3 font-mono text-xs text-slate-800 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/20"
+            className="mt-2 w-full rounded-xl border border-line-strong p-3 font-mono text-xs text-ink placeholder:text-muted focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20"
           />
           <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 text-xs">
-            <span className="flex items-center gap-1.5 text-slate-600">
+            <span className="flex items-center gap-1.5 text-muted">
               <CheckCircle2 className="h-3.5 w-3.5 text-teal-600" />
               {parsed.rows.length} commenter{parsed.rows.length === 1 ? "" : "s"} detected · {withUrl} with profile
               URL · {withPost} with post URL
             </span>
             {localRaw && (
-              <button type="button" onClick={() => setLocalRaw("")} className="text-slate-500 hover:text-slate-800">
+              <button type="button" onClick={() => setLocalRaw("")} className="text-muted hover:text-ink">
                 Clear
               </button>
             )}
@@ -247,9 +247,9 @@ export function SettingsModal({
           )}
 
           {parsed.rows.length > 0 && (
-            <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
+            <div className="mt-3 overflow-x-auto rounded-lg border border-line">
               <table className="w-full text-left text-[11px]">
-                <thead className="bg-slate-50 text-slate-600">
+                <thead className="bg-cream text-muted">
                   <tr>
                     <th className="px-2 py-1.5 font-semibold">Name</th>
                     <th className="px-2 py-1.5 font-semibold">Role / Org</th>
@@ -259,21 +259,21 @@ export function SettingsModal({
                 </thead>
                 <tbody>
                   {parsed.rows.slice(0, 5).map((r, i) => (
-                    <tr key={`${r.name}-${i}`} className="border-t border-slate-100 align-top">
-                      <td className="px-2 py-1.5 font-semibold text-[#17233B]">{r.name}</td>
-                      <td className="px-2 py-1.5 text-slate-600">
+                    <tr key={`${r.name}-${i}`} className="border-t border-line align-top">
+                      <td className="px-2 py-1.5 font-semibold text-ink">{r.name}</td>
+                      <td className="px-2 py-1.5 text-muted">
                         {[r.currentRole, r.organization].filter(Boolean).join(" · ") || "—"}
                       </td>
-                      <td className="max-w-[180px] truncate px-2 py-1.5 font-mono text-blue-700">
-                        {r.linkedinUrl || <span className="text-slate-400">not available</span>}
+                      <td className="max-w-[180px] truncate px-2 py-1.5 font-mono text-brand">
+                        {r.linkedinUrl || <span className="text-muted">not available</span>}
                       </td>
-                      <td className="max-w-[220px] truncate px-2 py-1.5 text-slate-600">{r.commentText || "—"}</td>
+                      <td className="max-w-[220px] truncate px-2 py-1.5 text-muted">{r.commentText || "—"}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
               {parsed.rows.length > 5 && (
-                <p className="border-t border-slate-100 px-2 py-1.5 text-[11px] text-slate-500">
+                <p className="border-t border-line px-2 py-1.5 text-[11px] text-muted">
                   + {parsed.rows.length - 5} more
                 </p>
               )}
@@ -285,14 +285,14 @@ export function SettingsModal({
           <button
             type="button"
             onClick={onClose}
-            className="h-11 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            className="h-11 rounded-xl border border-line-strong px-4 text-sm font-semibold text-ink-soft transition hover:bg-cream-2"
           >
             Cancel
           </button>
           <button
             type="button"
             onClick={handleSave}
-            className="h-11 rounded-xl bg-[#0F3FBF] px-5 text-sm font-semibold text-white transition hover:bg-blue-800"
+            className="h-11 rounded-xl bg-brand px-5 text-sm font-semibold text-white transition hover:bg-brand-ink"
           >
             Apply
           </button>

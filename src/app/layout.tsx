@@ -15,9 +15,9 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "EDXSO | LinkedIn Engagement & Lookalike Profile Discovery",
+  title: "EDXSO Prospect Discovery",
   description:
-    "AI-powered K12 school-ecosystem prospect discovery, commenter deduplication, semantic lookalike matching, and EDXSO outreach ranking.",
+    "Find K12 school-network decision makers from LinkedIn engagement: post discovery, commenter extraction, AI ranking and lookalike profiles.",
 };
 
 export default function RootLayout({
@@ -30,7 +30,7 @@ export default function RootLayout({
       lang="en"
       className={`${jakartaSans.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-[#F7F9FC] text-[#17233B] font-sans">
+      <body className="min-h-full flex flex-col bg-cream text-ink font-sans">
         {children}
       </body>
     </html>

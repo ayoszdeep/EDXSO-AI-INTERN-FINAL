@@ -16,62 +16,62 @@ export function MethodologyModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[#17233B]/45 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-label="AI Ranking & Compliance Methodology"
     >
-      <div className="relative max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_24px_64px_-16px_rgba(23,35,59,0.22)] sm:p-8">
+      <div className="relative max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-line bg-paper p-6 shadow-2xl sm:p-8">
         <button
           onClick={onClose}
-          className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+          className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-lg text-muted transition hover:bg-cream-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
           aria-label="Close methodology dialog"
         >
           <X className="h-5 w-5" />
         </button>
 
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-soft text-brand">
             <Cpu className="h-5 w-5" />
           </div>
           <div>
-            <h2 className="text-xl font-bold text-[#17233B]">
+            <h2 className="text-xl font-bold text-ink">
               AI Ranking, Embeddings & Compliance Architecture
             </h2>
-            <p className="text-sm text-slate-600">
+            <p className="text-sm text-muted">
               How EDXSO scores commenters, discovers lookalikes, and preserves provenance
             </p>
           </div>
         </div>
 
-        <div className="mt-6 space-y-6 text-sm text-slate-700">
-          <div className="rounded-xl border border-slate-200 bg-[#F7F9FC] p-4">
-            <h3 className="flex items-center gap-2 font-bold text-[#17233B]">
-              <Scale className="h-4 w-4 text-blue-700" />
+        <div className="mt-6 space-y-6 text-sm text-ink-soft">
+          <div className="rounded-xl border border-line bg-cream p-4">
+            <h3 className="flex items-center gap-2 font-bold text-ink">
+              <Scale className="h-4 w-4 text-brand" />
               Scoring Rubric (0–100 Points)
             </h3>
             <p className="mt-2 leading-relaxed">{methodology.summary}</p>
             <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div className="rounded-lg border border-slate-200 bg-white p-3">
-                <div className="text-xs font-medium text-slate-500">Ecosystem Fit</div>
-                <div className="mt-1 text-lg font-bold text-blue-700 tabular-nums">
+              <div className="rounded-lg border border-line bg-paper p-3">
+                <div className="text-xs font-medium text-muted">Ecosystem Fit</div>
+                <div className="mt-1 text-lg font-bold text-brand tabular-nums">
                   {methodology.weights.ecosystemFit} pts
                 </div>
               </div>
-              <div className="rounded-lg border border-slate-200 bg-white p-3">
-                <div className="text-xs font-medium text-slate-500">Network Reach</div>
+              <div className="rounded-lg border border-line bg-paper p-3">
+                <div className="text-xs font-medium text-muted">Network Reach</div>
                 <div className="mt-1 text-lg font-bold text-teal-700 tabular-nums">
                   {methodology.weights.networkReach} pts
                 </div>
               </div>
-              <div className="rounded-lg border border-slate-200 bg-white p-3">
-                <div className="text-xs font-medium text-slate-500">Semantic Match</div>
+              <div className="rounded-lg border border-line bg-paper p-3">
+                <div className="text-xs font-medium text-muted">Semantic Match</div>
                 <div className="mt-1 text-lg font-bold text-violet-700 tabular-nums">
                   {methodology.weights.semanticAlignment} pts
                 </div>
               </div>
-              <div className="rounded-lg border border-slate-200 bg-white p-3">
-                <div className="text-xs font-medium text-slate-500">Signal / Seed Sim</div>
+              <div className="rounded-lg border border-line bg-paper p-3">
+                <div className="text-xs font-medium text-muted">Signal / Seed Sim</div>
                 <div className="mt-1 text-lg font-bold text-amber-600 tabular-nums">
                   {methodology.weights.engagementOrSimilaritySignal} pts
                 </div>
@@ -80,17 +80,17 @@ export function MethodologyModal({
           </div>
 
           <div>
-            <h3 className="font-bold text-[#17233B]">
+            <h3 className="font-bold text-ink">
               12-Dimensional K12 Semantic Embedding Space
             </h3>
-            <p className="mt-1 text-xs text-slate-600">
+            <p className="mt-1 text-xs text-muted">
               Evaluates synonym-expanded role & ecosystem concepts rather than brittle exact keyword matching:
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               {methodology.embeddingDimensions.map((dim) => (
                 <span
                   key={dim}
-                  className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700"
+                  className="rounded-lg border border-line bg-cream px-2.5 py-1 text-xs font-medium text-ink-soft"
                 >
                   {dim}
                 </span>

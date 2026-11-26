@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AiClassification,
   AnalyzedCommenter,
@@ -10,7 +11,7 @@ import {
   LookalikeProfile,
   SearchInputMode,
 } from "@/lib/types";
-import { BreakdownBars, ScoreRing, TierBadge } from "@/components/ScoreBadge";
+import { BreakdownBars, ScorePill, TierBadge } from "@/components/ScoreBadge";
 import { MethodologyModal } from "@/components/MethodologyModal";
 import {
   OptionalApiKeys,
@@ -19,24 +20,19 @@ import {
   SettingsModal,
 } from "@/components/SettingsModal";
 import {
-  AlertTriangle,
   ArrowUpRight,
   BookOpen,
   Check,
+  ChevronDown,
   Copy,
   Download,
   ExternalLink,
-  Filter,
-  GitBranch,
-  Info,
   Link2,
   Loader2,
   MapPin,
-  MessageSquareText,
   Search,
   Settings2,
   Sparkles,
-  Users,
 } from "lucide-react";
 
 const SAMPLE_TEST_POST_URL =
@@ -49,40 +45,33 @@ const PRESET_QUERIES = [
   "Multi-School EdTech Partnerships",
 ];
 
-const WORKFLOW_STAGES = [
-  { id: 1, label: "Search Input" },
-  { id: 2, label: "Post Discovery" },
-  { id: 3, label: "Commenter Extraction" },
-  { id: 4, label: "AI Profile Analysis" },
-  { id: 5, label: "Lookalike Discovery" },
-  { id: 6, label: "Ranking & Export" },
-];
+const STAGES = ["Input", "Posts", "Commenters", "AI analysis", "Lookalikes", "Rank & export"];
+
+type Track = "both" | "commenters" | "lookalikes";
 
 export function DiscoveryDashboard() {
   const [mode, setMode] = useState<SearchInputMode>("keyword");
   const [query, setQuery] = useState("K12 B2B Sales");
   const [postUrl, setPostUrl] = useState("");
-  const [dataSourcePref, setDataSourcePref] = useState<DataSourceMode>(
-    "labelled_test_dataset"
-  );
+  const [dataSourcePref, setDataSourcePref] = useState<DataSourceMode>("labelled_test_dataset");
 
   const [result, setResult] = useState<DiscoveryResult | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [activeTrack, setActiveTrack] = useState<
-    "commenters" | "lookalikes" | "split"
-  >("split");
-  const [minScore, setMinScore] = useState<number>(0);
-  const [tierFilter, setTierFilter] = useState<string>("all");
-  const [textFilter, setTextFilter] = useState<string>("");
+  const [track, setTrack] = useState<Track>("both");
+  const [minScore, setMinScore] = useState(0);
+  const [tierFilter, setTierFilter] = useState("all");
+  const [textFilter, setTextFilter] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [expandedCommenterIds, setExpandedCommenterIds] = useState<
-    Record<string, boolean>
-  >({});
 
   const [showMethodology, setShowMethodology] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState<"csv" | "json" | null>(null);
+  const exportRef = useRef<HTMLDivElement>(null);
+
   const [apiKeys, setApiKeys] = useState<OptionalApiKeys>({
     geminiApiKey: "",
     serperApiKey: "",
@@ -96,9 +85,6 @@ export function DiscoveryDashboard() {
     gemini: false,
   });
   const [manualCommentersRaw, setManualCommentersRaw] = useState("");
-  const [exportingFormat, setExportingFormat] = useState<"csv" | "json" | null>(
-    null
-  );
 
   const executeDiscovery = useCallback(
     async (override?: Partial<DiscoveryRequest>) => {
@@ -108,7 +94,6 @@ export function DiscoveryDashboard() {
         const effectiveMode = override?.mode ?? mode;
         const parsedManual = parseCommentersText(manualCommentersRaw);
         const targetPostUrl = override?.postUrl ?? postUrl;
-
         const payload: DiscoveryRequest = {
           mode: effectiveMode,
           query: override?.query ?? query,
@@ -130,22 +115,17 @@ export function DiscoveryDashboard() {
             apifyApiToken: apiKeys.apifyApiToken.trim() || undefined,
           },
         };
-
         const res = await fetch("/api/discover", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
-
         const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.error || "Discovery request failed");
-        }
+        if (!res.ok) throw new Error(data.error || "Discovery request failed");
         setResult(data as DiscoveryResult);
+        setShowDetails((data as DiscoveryResult).warnings.length > 0);
       } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Failed to execute workflow"
-        );
+        setError(err instanceof Error ? err.message : "Failed to run discovery");
       } finally {
         setLoading(false);
       }
@@ -165,9 +145,9 @@ export function DiscoveryDashboard() {
         }
       })
       .catch(() => {
-        // health is advisory only
+        // advisory only
       });
-    // First paint runs the free, clearly labelled test dataset so no provider credit is spent on page load
+    // First paint uses the free labelled test dataset, so no provider credit is spent on page load
     fetch("/api/discover", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -188,45 +168,39 @@ export function DiscoveryDashboard() {
         if (active) setResult(data);
       })
       .catch((err) => {
-        if (active) {
-          setError(
-            err instanceof Error ? err.message : "Failed to execute workflow"
-          );
-        }
+        if (active) setError(err instanceof Error ? err.message : "Failed to run discovery");
       })
       .finally(() => {
         if (active) setLoading(false);
       });
-
     return () => {
       active = false;
     };
   }, []);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    void executeDiscovery();
-  };
+  useEffect(() => {
+    if (!exportOpen) return;
+    const close = (e: MouseEvent) => {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) setExportOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [exportOpen]);
 
-  const handleAnalyzeSinglePost = (url: string) => {
-    setMode("post_url");
-    setPostUrl(url);
-    void executeDiscovery({ mode: "post_url", postUrl: url });
-  };
-
-  const handleCopyUrl = async (id: string, url: string) => {
+  const handleCopy = async (id: string, url: string) => {
     try {
       await navigator.clipboard.writeText(url);
       setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 1600);
+      setTimeout(() => setCopiedId(null), 1500);
     } catch {
-      // Clipboard fallback ignored
+      // clipboard unavailable
     }
   };
 
   const handleExport = async (format: "csv" | "json") => {
     if (!result) return;
-    setExportingFormat(format);
+    setExportOpen(false);
+    setExporting(format);
     try {
       const res = await fetch("/api/export", {
         method: "POST",
@@ -236,305 +210,206 @@ export function DiscoveryDashboard() {
       if (!res.ok) throw new Error("Export failed");
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `edxso-prospects-${result.runId}.${format}`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `edxso-prospects-${result.runId}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
       URL.revokeObjectURL(url);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Export failed");
     } finally {
-      setExportingFormat(null);
+      setExporting(null);
     }
   };
 
-  const filteredCommenters = useMemo(() => {
-    if (!result) return [];
-    const q = textFilter.trim().toLowerCase();
-    return result.commenters.filter((c) => {
-      if (c.relevanceScore < minScore) return false;
-      if (tierFilter !== "all" && c.personaTier !== tierFilter) return false;
-      if (q) {
-        const hay = `${c.name} ${c.currentRole} ${c.organization} ${c.location ?? ""} ${c.schoolEcosystemIndicators.join(" ")}`.toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    });
-  }, [result, minScore, tierFilter, textFilter]);
-
-  const filteredLookalikes = useMemo(() => {
-    if (!result) return [];
-    const q = textFilter.trim().toLowerCase();
-    return result.lookalikes.filter((l) => {
-      if (l.relevanceScore < minScore) return false;
-      if (tierFilter !== "all" && l.personaTier !== tierFilter) return false;
-      if (q) {
-        const hay = `${l.name} ${l.currentRole} ${l.organization} ${l.location ?? ""} ${l.schoolEcosystemIndicators.join(" ")} ${l.seedProfiles.map((s) => s.seedCommenterName).join(" ")}`.toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    });
-  }, [result, minScore, tierFilter, textFilter]);
-
-  const hasLiveSearchKey = Boolean(
-    apiKeys.serperApiKey.trim() ||
-      apiKeys.tavilyApiKey.trim() ||
-      serverProviders.serper ||
-      serverProviders.tavily
-  );
-  const hasCommentsSource = Boolean(
-    apiKeys.apifyApiToken.trim() || serverProviders.apify || manualCommentersRaw.trim()
-  );
-  const importedCount = useMemo(
-    () => parseCommentersText(manualCommentersRaw).length,
-    [manualCommentersRaw]
+  const matchesFilters = useCallback(
+    (score: number, tier: string, hay: string) => {
+      if (score < minScore) return false;
+      if (tierFilter !== "all" && tier !== tierFilter) return false;
+      const q = textFilter.trim().toLowerCase();
+      return !q || hay.toLowerCase().includes(q);
+    },
+    [minScore, tierFilter, textFilter]
   );
 
-  // Verify (not just claim) that no lookalike is also a commenter
+  const commenters = useMemo(
+    () =>
+      (result?.commenters ?? []).filter((c) =>
+        matchesFilters(
+          c.relevanceScore,
+          c.personaTier,
+          `${c.name} ${c.currentRole} ${c.organization} ${c.location ?? ""} ${c.schoolEcosystemIndicators.join(" ")}`
+        )
+      ),
+    [result, matchesFilters]
+  );
+
+  const lookalikes = useMemo(
+    () =>
+      (result?.lookalikes ?? []).filter((l) =>
+        matchesFilters(
+          l.relevanceScore,
+          l.personaTier,
+          `${l.name} ${l.currentRole} ${l.organization} ${l.location ?? ""} ${l.schoolEcosystemIndicators.join(" ")} ${l.seedProfiles.map((s) => s.seedCommenterName).join(" ")}`
+        )
+      ),
+    [result, matchesFilters]
+  );
+
   const overlapCount = useMemo(() => {
     if (!result) return 0;
-    const urls = new Set(
-      result.commenters.map((c) => c.canonicalLinkedinUrl).filter(Boolean)
-    );
+    const urls = new Set(result.commenters.map((c) => c.canonicalLinkedinUrl).filter(Boolean));
     return result.lookalikes.filter((l) => urls.has(l.canonicalLinkedinUrl)).length;
   }, [result]);
 
+  const hasLiveSearchKey = Boolean(
+    apiKeys.serperApiKey.trim() || apiKeys.tavilyApiKey.trim() || serverProviders.serper || serverProviders.tavily
+  );
+  const hasApify = Boolean(apiKeys.apifyApiToken.trim() || serverProviders.apify);
+  const importedCount = useMemo(() => parseCommentersText(manualCommentersRaw).length, [manualCommentersRaw]);
+  const isLiveRequest = mode === "post_url" || dataSourcePref === "authorized_provider";
+
   return (
-    <div className="min-h-screen flex flex-col">
-      {/* Sticky Header */}
-      <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/90 backdrop-blur-md">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
+    <div className="flex min-h-screen flex-col">
+      {/* Header */}
+      <header className="sticky top-0 z-30 border-b border-line bg-paper/90 backdrop-blur">
+        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-3 px-4 sm:px-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#0F3FBF] text-white shadow-sm">
-              <Sparkles className="h-5 w-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-base font-extrabold tracking-tight text-[#17233B] sm:text-lg">
-                  EDXSO Prospect Intelligence
-                </span>
-                <span className="hidden rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-blue-800 sm:inline-flex">
-                  K12 Ecosystem AI
-                </span>
-              </div>
-              <p className="text-xs text-slate-600">
-                LinkedIn Engagement Extraction, Deduplication & Lookalike Discovery
-              </p>
-            </div>
+            <Image src="/edxso-logo.png" alt="EDXSO" width={107} height={32} priority className="h-8 w-auto" />
+            <span className="hidden h-6 w-px bg-line sm:block" />
+            <span className="hidden text-sm font-semibold text-ink-soft sm:block">Prospect Discovery</span>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setShowMethodology(true)}
-              className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
-            >
-              <BookOpen className="h-4 w-4 text-blue-700" />
-              <span>Scoring Logic</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowSettings(true)}
-              className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
-            >
-              <Settings2 className="h-4 w-4 text-slate-700" />
-              <span>Providers & Import</span>
-            </button>
-            <div className="h-6 w-px bg-slate-200 hidden sm:block" />
-            <button
-              type="button"
-              disabled={!result || exportingFormat !== null}
-              onClick={() => void handleExport("csv")}
-              className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-[#17233B] transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
-            >
-              <Download className="h-4 w-4 text-teal-700" />
-              <span>{exportingFormat === "csv" ? "Exporting..." : "Export CSV"}</span>
-            </button>
-            <button
-              type="button"
-              disabled={!result || exportingFormat !== null}
-              onClick={() => void handleExport("json")}
-              className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-[#17233B] px-3.5 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
-            >
-              <Download className="h-4 w-4" />
-              <span>{exportingFormat === "json" ? "Exporting..." : "Export JSON"}</span>
-            </button>
-          </div>
+          <nav className="flex items-center gap-1.5">
+            <HeaderButton onClick={() => setShowMethodology(true)} label="How scoring works">
+              <BookOpen className="h-4 w-4" />
+            </HeaderButton>
+            <HeaderButton onClick={() => setShowSettings(true)} label="Data sources">
+              <Settings2 className="h-4 w-4" />
+            </HeaderButton>
+            <div className="relative" ref={exportRef}>
+              <button
+                type="button"
+                disabled={!result || exporting !== null}
+                onClick={() => setExportOpen((v) => !v)}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-ink px-3 text-xs font-semibold text-white transition hover:bg-ink-soft disabled:opacity-50"
+                aria-haspopup="menu"
+                aria-expanded={exportOpen}
+              >
+                {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                Export
+                <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+              </button>
+              {exportOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 mt-1.5 w-40 overflow-hidden rounded-lg border border-line bg-paper py-1 shadow-lg"
+                >
+                  {(["csv", "json"] as const).map((f) => (
+                    <button
+                      key={f}
+                      role="menuitem"
+                      type="button"
+                      onClick={() => void handleExport(f)}
+                      className="block w-full px-3 py-2 text-left text-sm text-ink hover:bg-cream-2"
+                    >
+                      Download {f.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </nav>
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-7xl flex-1 space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-        {/* Compliance & Provenance Banner */}
-        {result && (
-          <div
-            className={`flex flex-col gap-2 rounded-2xl border p-4 sm:flex-row sm:items-center sm:justify-between ${
-              result.isTestData
-                ? "border-amber-200 bg-amber-50/85 text-amber-950"
-                : "border-emerald-200 bg-emerald-50/85 text-emerald-950"
-            }`}
+      <main className="mx-auto w-full max-w-6xl flex-1 space-y-6 px-4 py-8 sm:px-6">
+        {/* Search */}
+        <section className="rounded-2xl border border-line bg-paper p-5 shadow-sm sm:p-7">
+          <h1 className="text-2xl font-extrabold tracking-tight text-ink sm:text-[28px]">
+            Find school-network decision makers
+          </h1>
+          <p className="mt-1.5 max-w-2xl text-sm text-muted">
+            Search a phrase or paste a LinkedIn post. We find the people who commented, rank them for EDXSO outreach,
+            and discover similar professionals.
+          </p>
+
+          <div className="mt-5 inline-flex rounded-lg bg-cream-2 p-1" role="tablist" aria-label="Input mode">
+            {(
+              [
+                ["keyword", "Keyword", Search],
+                ["post_url", "Post URL", Link2],
+              ] as const
+            ).map(([value, label, Icon]) => (
+              <button
+                key={value}
+                type="button"
+                role="tab"
+                aria-selected={mode === value}
+                onClick={() => setMode(value)}
+                className={`inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-semibold transition ${
+                  mode === value ? "bg-paper text-brand shadow-sm" : "text-muted hover:text-ink"
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void executeDiscovery();
+            }}
+            className="mt-3 flex flex-col gap-2.5 sm:flex-row"
           >
-            <div className="flex items-start gap-3">
-              <AlertTriangle
-                className={`mt-0.5 h-5 w-5 shrink-0 ${
-                  result.isTestData ? "text-amber-700" : "text-emerald-700"
+            <div className="relative flex-1">
+              {mode === "keyword" ? (
+                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+              ) : (
+                <Link2 className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+              )}
+              <input
+                type={mode === "keyword" ? "text" : "url"}
+                value={mode === "keyword" ? query : postUrl}
+                onChange={(e) => (mode === "keyword" ? setQuery(e.target.value) : setPostUrl(e.target.value))}
+                placeholder={mode === "keyword" ? "e.g. K12 B2B Sales" : "https://www.linkedin.com/posts/..."}
+                aria-label={mode === "keyword" ? "Search phrase" : "LinkedIn post URL"}
+                className={`h-12 w-full rounded-xl border border-line-strong bg-white pl-10 pr-4 text-ink placeholder:text-muted/70 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20 ${
+                  mode === "keyword" ? "text-base" : "font-mono text-sm"
                 }`}
               />
-              <div className="text-xs sm:text-sm">
-                <span className="font-bold">
-                  {result.isTestData
-                    ? "Data Provenance: Clearly Labelled Test Dataset"
-                    : `Data Provenance: ${result.dataSource === "authorized_provider" ? "Authorized Search Index" : "User-Supplied Post URL & Engagement"}`}
-                </span>
-                <p className="mt-0.5 leading-relaxed opacity-90">
-                  {result.complianceNotice}
-                </p>
-                <p className="mt-1 text-[11px] opacity-80">
-                  Posts: {result.providers.posts} · Comments: {result.providers.comments} · Lookalikes:{" "}
-                  {result.providers.lookalikes} · Ranking: {result.providers.ai}
-                </p>
-              </div>
             </div>
-            <div className="flex shrink-0 items-center gap-2 text-xs font-semibold">
-              <span className="rounded-lg border border-current/20 bg-white/70 px-2.5 py-1">
-                AI: {result.aiMethod}
-              </span>
-            </div>
-          </div>
-        )}
-
-        {result && result.warnings.length > 0 && (
-          <div className="rounded-2xl border border-blue-200 bg-blue-50/70 p-4 text-xs text-blue-950">
-            <div className="flex items-center gap-2 font-bold">
-              <Info className="h-4 w-4 text-blue-700" />
-              Run notes
-            </div>
-            <ul className="mt-1.5 list-disc space-y-0.5 pl-5">
-              {result.warnings.map((w) => (
-                <li key={w}>{w}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {/* Stage 1: Search Input Studio */}
-        <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_2px_8px_rgba(23,35,59,0.05)] sm:p-6">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <h1 className="text-xl font-extrabold tracking-tight text-[#17233B] sm:text-2xl">
-                Discover School-Ecosystem Decision Makers & Lookalikes
-              </h1>
-              <p className="mt-1 text-sm text-slate-600">
-                Start from a search phrase (e.g., <span className="font-semibold text-[#17233B]">“K12 B2B Sales”</span>) or supply a direct LinkedIn post URL to extract commenters, deduplicate across posts, and rank AI lookalikes.
-              </p>
-            </div>
-
-            {/* Input Mode Switch */}
-            <div
-              className="inline-flex self-start rounded-xl border border-slate-200 bg-[#F7F9FC] p-1"
-              role="tablist"
-              aria-label="Discovery input mode"
+            {mode === "keyword" && (
+              <select
+                value={dataSourcePref}
+                onChange={(e) => setDataSourcePref(e.target.value as DataSourceMode)}
+                aria-label="Data source"
+                className="h-12 rounded-xl border border-line-strong bg-white px-3 text-sm font-medium text-ink focus:border-brand focus:outline-none"
+              >
+                <option value="authorized_provider" disabled={!hasLiveSearchKey}>
+                  Live data{hasLiveSearchKey ? "" : " (needs key)"}
+                </option>
+                <option value="labelled_test_dataset">Test dataset</option>
+              </select>
+            )}
+            <button
+              type="submit"
+              disabled={loading}
+              className="inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-xl bg-brand px-6 text-sm font-bold text-white shadow-sm transition hover:bg-brand-ink disabled:opacity-60"
             >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={mode === "keyword"}
-                onClick={() => setMode("keyword")}
-                className={`inline-flex h-10 items-center gap-2 rounded-lg px-4 text-xs font-bold transition ${
-                  mode === "keyword"
-                    ? "bg-white text-[#0F3FBF] shadow-sm"
-                    : "text-slate-600 hover:text-[#17233B]"
-                }`}
-              >
-                <Search className="h-4 w-4" />
-                Keyword / Phrase
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={mode === "post_url"}
-                onClick={() => setMode("post_url")}
-                className={`inline-flex h-10 items-center gap-2 rounded-lg px-4 text-xs font-bold transition ${
-                  mode === "post_url"
-                    ? "bg-white text-[#0F3FBF] shadow-sm"
-                    : "text-slate-600 hover:text-[#17233B]"
-                }`}
-              >
-                <Link2 className="h-4 w-4" />
-                Direct Post URL
-              </button>
-            </div>
-          </div>
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              {loading ? (isLiveRequest ? "Fetching live data…" : "Running…") : "Run discovery"}
+            </button>
+          </form>
 
-          <form onSubmit={handleSubmit} className="mt-5 space-y-4">
-            <div className="flex flex-col gap-3 sm:flex-row">
-              {mode === "keyword" ? (
-                <div className="relative flex-1">
-                  <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="text"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Enter search phrase (e.g., K12 B2B Sales)"
-                    aria-label="Search phrase"
-                    className="h-12 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-4 text-base text-[#17233B] placeholder:text-slate-400 focus:border-[#0F3FBF] focus:outline-none focus:ring-2 focus:ring-[#0F3FBF]/20"
-                  />
-                </div>
-              ) : (
-                <div className="relative flex-1">
-                  <Link2 className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="url"
-                    value={postUrl}
-                    onChange={(e) => setPostUrl(e.target.value)}
-                    placeholder="https://www.linkedin.com/posts/..."
-                    aria-label="LinkedIn post URL"
-                    className="h-12 w-full rounded-xl border border-slate-300 bg-white pl-10 pr-4 font-mono text-sm text-[#17233B] placeholder:text-slate-400 focus:border-[#0F3FBF] focus:outline-none focus:ring-2 focus:ring-[#0F3FBF]/20"
-                  />
-                </div>
-              )}
-
-              {mode === "keyword" && (
-                <select
-                  value={dataSourcePref}
-                  onChange={(e) =>
-                    setDataSourcePref(e.target.value as DataSourceMode)
-                  }
-                  aria-label="Data source mode"
-                  className="h-12 rounded-xl border border-slate-300 bg-white px-3 text-sm font-medium text-[#17233B] focus:border-[#0F3FBF] focus:outline-none"
-                >
-                  <option value="authorized_provider" disabled={!hasLiveSearchKey}>
-                    Live LinkedIn data{hasLiveSearchKey ? "" : " (add Serper key)"}
-                  </option>
-                  <option value="labelled_test_dataset">Labelled test dataset</option>
-                </select>
-              )}
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#0F3FBF] px-6 text-sm font-bold text-white shadow-sm transition hover:bg-blue-800 active:scale-[0.99] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
-              >
-                {loading ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    {dataSourcePref === "authorized_provider" || mode === "post_url"
-                      ? "Fetching live data (up to ~1 min)..."
-                      : "Running Pipeline..."}
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="h-4 w-4" />
-                    Run Discovery
-                  </>
-                )}
-              </button>
-            </div>
-
+          <div className="mt-3 flex min-h-7 flex-wrap items-center gap-2 text-xs text-muted">
             {mode === "keyword" ? (
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                <span className="font-semibold text-slate-500">Demo presets:</span>
+              <>
+                <span>Try:</span>
                 {PRESET_QUERIES.map((preset) => (
                   <button
                     key={preset}
@@ -543,435 +418,329 @@ export function DiscoveryDashboard() {
                       setQuery(preset);
                       void executeDiscovery({ mode: "keyword", query: preset });
                     }}
-                    className={`rounded-full border px-3 py-1 font-medium transition ${
+                    className={`rounded-full px-2.5 py-1 font-medium ring-1 transition ${
                       query === preset
-                        ? "border-blue-300 bg-blue-50 text-blue-800"
-                        : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                        ? "bg-brand-soft text-brand-ink ring-blue-200"
+                        : "bg-cream text-ink-soft ring-line hover:bg-cream-2"
                     }`}
                   >
                     {preset}
                   </button>
                 ))}
-              </div>
+              </>
             ) : (
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span>Paste any public LinkedIn post URL, or</span>
-                  <button
-                    type="button"
-                    onClick={() => setPostUrl(SAMPLE_TEST_POST_URL)}
-                    className="font-semibold text-blue-700 hover:underline"
-                  >
-                    use a labelled test-dataset post
-                  </button>
-                </div>
+              <>
+                <span>
+                  {importedCount > 0
+                    ? `${importedCount} imported commenter${importedCount === 1 ? "" : "s"} will be used.`
+                    : hasApify
+                      ? "Commenters are fetched automatically."
+                      : "Add an Apify token or import commenters to analyse a post."}
+                </span>
                 <button
                   type="button"
                   onClick={() => setShowSettings(true)}
-                  className="font-semibold text-teal-700 hover:underline"
+                  className="font-semibold text-brand hover:underline"
                 >
-                  {importedCount > 0
-                    ? `${importedCount} imported commenter(s) ready · edit →`
-                    : hasCommentsSource
-                      ? "Commenters via Apify · import more →"
-                      : "Commenters: add Apify token or import a list →"}
+                  Import commenters
                 </button>
-              </div>
+                <span aria-hidden>·</span>
+                <button
+                  type="button"
+                  onClick={() => setPostUrl(SAMPLE_TEST_POST_URL)}
+                  className="font-semibold text-brand hover:underline"
+                >
+                  Use a test post
+                </button>
+              </>
             )}
-          </form>
+          </div>
 
           {error && (
             <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-800">
               {error}
             </div>
           )}
-        </section>
 
-        {/* 6-Stage Pipeline Stepper + KPI Summary */}
-        <section className="space-y-4">
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-            {WORKFLOW_STAGES.map((stage) => {
-              const completed = Boolean(result) && !loading;
+          <ol className="mt-6 flex items-center gap-2 overflow-x-auto border-t border-line pt-4 text-[11px] font-medium text-muted">
+            {STAGES.map((stage, i) => {
+              const done = Boolean(result) && !loading;
               return (
-                <div
-                  key={stage.id}
-                  className={`flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-xs transition ${
-                    completed
-                      ? "border-emerald-200/80 bg-white text-[#17233B]"
-                      : "border-slate-200 bg-white/70 text-slate-500"
-                  }`}
-                >
+                <li key={stage} className="flex shrink-0 items-center gap-2">
                   <span
-                    className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold tabular-nums ${
-                      completed
-                        ? "bg-emerald-600 text-white"
-                        : "bg-slate-200 text-slate-600"
+                    className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+                      done ? "bg-emerald-600 text-white" : loading ? "bg-brand-soft text-brand" : "bg-cream-2 text-muted"
                     }`}
                   >
-                    {completed ? <Check className="h-3.5 w-3.5" /> : stage.id}
+                    {done ? <Check className="h-3 w-3" /> : i + 1}
                   </span>
-                  <span className="font-semibold leading-tight">
-                    {stage.label}
-                  </span>
-                </div>
+                  <span className={done ? "text-ink-soft" : ""}>{stage}</span>
+                  {i < STAGES.length - 1 && <span className="h-px w-5 bg-line-strong" aria-hidden />}
+                </li>
               );
             })}
-          </div>
-
-          {result && (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_2px_8px_rgba(23,35,59,0.04)]">
-                <div className="text-xs font-semibold text-slate-500">
-                  Relevant Posts Discovered
-                </div>
-                <div className="mt-1 text-2xl font-extrabold text-[#17233B] tabular-nums">
-                  {result.stats.postsFound}
-                </div>
-                <div className="mt-0.5 text-[11px] text-slate-500">
-                  {result.inputMode === "keyword"
-                    ? "Top 5 ranked recent posts"
-                    : "Direct URL processed"}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-teal-200/80 bg-white p-4 shadow-[0_2px_8px_rgba(23,35,59,0.04)]">
-                <div className="text-xs font-semibold text-teal-800">
-                  Unique Original Commenters
-                </div>
-                <div className="mt-1 flex items-baseline gap-2">
-                  <span className="text-2xl font-extrabold text-teal-700 tabular-nums">
-                    {result.stats.uniqueCommenters}
-                  </span>
-                  <span className="text-xs font-semibold text-slate-500 tabular-nums">
-                    ({result.stats.deduplicatedDuplicatesRemoved} dupes merged)
-                  </span>
-                </div>
-                <div className="mt-0.5 text-[11px] text-slate-500">
-                  Avg score {result.stats.avgCommenterScore}/100 · From {result.stats.rawCommentsExtracted} comments
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-violet-200/80 bg-white p-4 shadow-[0_2px_8px_rgba(23,35,59,0.04)]">
-                <div className="text-xs font-semibold text-violet-800">
-                  AI Lookalike Profiles
-                </div>
-                <div className="mt-1 text-2xl font-extrabold text-violet-700 tabular-nums">
-                  {result.stats.lookalikesDiscovered}
-                </div>
-                <div className="mt-0.5 text-[11px] text-slate-500">
-                  Avg score {result.stats.avgLookalikeScore}/100 · Seed-traced
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_2px_8px_rgba(23,35,59,0.04)]">
-                <div className="text-xs font-semibold text-slate-500">
-                  Category Isolation
-                </div>
-                <div
-                  className={`mt-1 text-lg font-extrabold ${overlapCount === 0 ? "text-emerald-700" : "text-red-700"}`}
-                >
-                  {overlapCount === 0 ? "Verified" : `${overlapCount} overlap(s)`}
-                </div>
-                <div className="mt-0.5 text-[11px] text-slate-500">
-                  Commenter/lookalike URL overlap checked in browser
-                </div>
-              </div>
-            </div>
-          )}
+          </ol>
         </section>
 
-        {/* Stage 2: Discovered Source Posts */}
+        {loading && !result && <LoadingState live={isLiveRequest} />}
+
         {result && (
-          <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_2px_8px_rgba(23,35,59,0.05)] sm:p-6">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h2 className="text-lg font-bold text-[#17233B]">
-                  Stage 2 · Discovered Source Posts ({result.posts.length})
-                </h2>
-                <p className="text-xs text-slate-600">
-                  Complete post URLs, authors, publish dates, and snippets used for commenter extraction
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-              {result.posts.map((post, index) => (
-                <article
-                  key={post.id}
-                  className="flex flex-col justify-between rounded-xl border border-slate-200 bg-[#F7F9FC]/60 p-4 transition hover:border-blue-300 hover:bg-white"
+          <>
+            {/* Run status */}
+            <section
+              className={`rounded-xl border px-4 py-3 text-sm ${
+                result.isTestData ? "border-amber-200 bg-amber-50/70" : "border-emerald-200 bg-emerald-50/70"
+              }`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                      result.isTestData ? "bg-amber-200/70 text-amber-900" : "bg-emerald-200/70 text-emerald-900"
+                    }`}
+                  >
+                    {result.isTestData ? "TEST DATA" : "LIVE DATA"}
+                  </span>
+                  <span className="text-ink-soft">
+                    {result.isTestData
+                      ? "Labelled test dataset: these are fixtures, not real LinkedIn records."
+                      : "Real LinkedIn data from authorised sources (no login or scraping)."}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowDetails((v) => !v)}
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-ink-soft hover:text-ink"
                 >
-                  <div>
-                    <div className="flex items-start justify-between gap-2">
-                      <span className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-blue-800 tabular-nums">
-                        Post #{index + 1} · {Math.round(post.relevanceToQuery * 100)}% match
-                      </span>
-                      <span className="text-[11px] font-medium text-slate-500 tabular-nums">
-                        {post.publishedAt ? post.publishedAt.slice(0, 10) : "Date n/a"}
-                        {" · "}
-                        {post.engagementStats.comments} comment
-                        {post.engagementStats.comments === 1 ? "" : "s"}
-                      </span>
-                    </div>
-
-                    <h3 className="mt-2.5 text-sm font-bold text-[#17233B]">
-                      {post.authorName}
-                    </h3>
-                    <p className="text-xs text-slate-600">{post.authorRole}</p>
-                    <p className="mt-2.5 text-xs leading-relaxed text-slate-700">
-                      “{post.snippet}”
-                    </p>
-                  </div>
-
-                  <div className="mt-4 space-y-2.5 border-t border-slate-200/80 pt-3">
-                    <div className="flex flex-wrap gap-1.5">
-                      {post.topics.slice(0, 3).map((topic) => (
-                        <span
-                          key={topic}
-                          className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-600"
-                        >
-                          {topic}
-                        </span>
+                  {result.warnings.length > 0 && (
+                    <span className="rounded-full bg-amber-500 px-1.5 text-[10px] font-bold text-white">
+                      {result.warnings.length}
+                    </span>
+                  )}
+                  Sources & notes
+                  <ChevronDown className={`h-3.5 w-3.5 transition ${showDetails ? "rotate-180" : ""}`} />
+                </button>
+              </div>
+              {showDetails && (
+                <div className="mt-3 space-y-2 border-t border-black/5 pt-3 text-xs text-ink-soft">
+                  <dl className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
+                    {(
+                      [
+                        ["Posts", result.providers.posts],
+                        ["Commenters", result.providers.comments],
+                        ["Lookalikes", result.providers.lookalikes],
+                        ["Ranking", result.providers.ai],
+                      ] as const
+                    ).map(([k, v]) => (
+                      <div key={k} className="flex gap-2">
+                        <dt className="w-20 shrink-0 font-semibold text-ink">{k}</dt>
+                        <dd>{v}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  {result.warnings.length > 0 && (
+                    <ul className="list-disc space-y-0.5 pl-5 text-amber-900">
+                      {result.warnings.map((w) => (
+                        <li key={w}>{w}</li>
                       ))}
-                    </div>
+                    </ul>
+                  )}
+                </div>
+              )}
+            </section>
 
-                    <div className="flex items-center justify-between gap-2">
+            {/* Stats */}
+            <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <Stat
+                label="Posts"
+                value={result.stats.postsFound}
+                hint={result.inputMode === "keyword" ? "recent & relevant" : "direct URL"}
+              />
+              <Stat
+                label="Commenters"
+                value={result.stats.uniqueCommenters}
+                hint={`${result.stats.deduplicatedDuplicatesRemoved} duplicates merged`}
+                accent="text-teal-700"
+              />
+              <Stat
+                label="Lookalikes"
+                value={result.stats.lookalikesDiscovered}
+                hint={`avg score ${result.stats.avgLookalikeScore}`}
+                accent="text-violet-700"
+              />
+              <Stat
+                label="Overlap check"
+                value={overlapCount === 0 ? "Clean" : overlapCount}
+                hint="no commenter shown as lookalike"
+                accent={overlapCount === 0 ? "text-emerald-700" : "text-red-700"}
+              />
+            </section>
+
+            {/* Posts */}
+            <section>
+              <SectionTitle title="Source posts" count={result.posts.length} />
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {result.posts.map((post) => (
+                  <article key={post.id} className="flex flex-col rounded-xl border border-line bg-paper p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <h3 className="truncate text-sm font-bold text-ink">{post.authorName}</h3>
+                        <p className="text-[11px] text-muted tabular-nums">
+                          {post.publishedAt ? post.publishedAt.slice(0, 10) : "Date n/a"} ·{" "}
+                          {post.engagementStats.comments} comment{post.engagementStats.comments === 1 ? "" : "s"}
+                        </p>
+                      </div>
+                      <span className="shrink-0 rounded-md bg-brand-soft px-1.5 py-0.5 text-[10px] font-bold text-brand-ink tabular-nums">
+                        {Math.round(post.relevanceToQuery * 100)}%
+                      </span>
+                    </div>
+                    <p className="mt-2 line-clamp-3 flex-1 text-xs leading-relaxed text-ink-soft">{post.snippet}</p>
+                    <div className="mt-3 flex items-center justify-between gap-2 border-t border-line pt-2.5">
                       <a
                         href={post.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 truncate font-mono text-[11px] font-medium text-blue-700 hover:underline"
-                        title={post.url}
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-brand hover:underline"
                       >
-                        <ExternalLink className="h-3 w-3 shrink-0" />
-                        <span className="truncate">
-                          {post.url.replace("https://www.linkedin.com", "")}
-                        </span>
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        Open post
                       </a>
                       {result.inputMode === "keyword" && (
                         <button
                           type="button"
-                          onClick={() => handleAnalyzeSinglePost(post.url)}
-                          className="shrink-0 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-800 transition hover:bg-blue-100"
+                          onClick={() => {
+                            setMode("post_url");
+                            setPostUrl(post.url);
+                            void executeDiscovery({ mode: "post_url", postUrl: post.url });
+                          }}
+                          className="text-xs font-semibold text-ink-soft hover:text-ink"
                         >
-                          Isolate Post
+                          Analyse only this →
                         </button>
                       )}
                     </div>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Stages 3-6: Separated & Ranked Commenters vs Lookalikes */}
-        {result && (
-          <section className="space-y-4">
-            {/* Filter & View Controls */}
-            <div className="flex flex-col gap-3 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_2px_8px_rgba(23,35,59,0.04)] lg:flex-row lg:items-center lg:justify-between">
-              <div className="inline-flex flex-wrap gap-1.5 rounded-xl bg-[#F7F9FC] p-1 border border-slate-200">
-                <button
-                  type="button"
-                  onClick={() => setActiveTrack("split")}
-                  className={`h-9 rounded-lg px-3.5 text-xs font-bold transition ${
-                    activeTrack === "split"
-                      ? "bg-white text-[#17233B] shadow-sm"
-                      : "text-slate-600 hover:text-[#17233B]"
-                  }`}
-                >
-                  Side-by-Side Split View
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTrack("commenters")}
-                  className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-3.5 text-xs font-bold transition ${
-                    activeTrack === "commenters"
-                      ? "bg-teal-700 text-white shadow-sm"
-                      : "text-slate-600 hover:text-[#17233B]"
-                  }`}
-                >
-                  <MessageSquareText className="h-3.5 w-3.5" />
-                  Original Commenters ({filteredCommenters.length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTrack("lookalikes")}
-                  className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-3.5 text-xs font-bold transition ${
-                    activeTrack === "lookalikes"
-                      ? "bg-violet-700 text-white shadow-sm"
-                      : "text-slate-600 hover:text-[#17233B]"
-                  }`}
-                >
-                  <GitBranch className="h-3.5 w-3.5" />
-                  AI Lookalikes ({filteredLookalikes.length})
-                </button>
+                  </article>
+                ))}
               </div>
+            </section>
 
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="relative">
-                  <Filter className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+            {/* Results */}
+            <section className="space-y-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="inline-flex self-start rounded-lg bg-cream-2 p-1" role="tablist" aria-label="Result lists">
+                  {(
+                    [
+                      ["both", "Both"],
+                      ["commenters", `Commenters (${commenters.length})`],
+                      ["lookalikes", `Lookalikes (${lookalikes.length})`],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="tab"
+                      aria-selected={track === value}
+                      onClick={() => setTrack(value)}
+                      className={`h-8 rounded-md px-3 text-xs font-semibold transition ${
+                        track === value ? "bg-paper text-ink shadow-sm" : "text-muted hover:text-ink"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
                   <input
-                    type="text"
+                    type="search"
                     value={textFilter}
                     onChange={(e) => setTextFilter(e.target.value)}
-                    placeholder="Filter name, org, city..."
+                    placeholder="Filter by name, org, city"
                     aria-label="Filter results"
-                    className="h-9 w-48 rounded-lg border border-slate-300 pl-8 pr-3 text-xs focus:border-blue-600 focus:outline-none"
+                    className="h-9 w-48 rounded-lg border border-line-strong bg-white px-3 text-xs focus:border-brand focus:outline-none"
                   />
+                  <select
+                    value={tierFilter}
+                    onChange={(e) => setTierFilter(e.target.value)}
+                    aria-label="Persona tier"
+                    className="h-9 rounded-lg border border-line-strong bg-white px-2 text-xs text-ink focus:border-brand focus:outline-none"
+                  >
+                    <option value="all">All tiers</option>
+                    <option value="Primary Decision-Maker / Advisor">Decision-maker</option>
+                    <option value="Ecosystem Multiplier">Multiplier</option>
+                    <option value="Adjacent EdTech Operator">Adjacent</option>
+                    <option value="Low Fit">Low fit</option>
+                  </select>
+                  <label className="flex h-9 items-center gap-2 rounded-lg border border-line-strong bg-white px-3 text-xs text-muted">
+                    Min score
+                    <input
+                      type="range"
+                      min={0}
+                      max={90}
+                      step={5}
+                      value={minScore}
+                      onChange={(e) => setMinScore(Number(e.target.value))}
+                      className="w-20 accent-[#006afe]"
+                    />
+                    <span className="w-5 font-semibold text-ink tabular-nums">{minScore}</span>
+                  </label>
                 </div>
-
-                <select
-                  value={tierFilter}
-                  onChange={(e) => setTierFilter(e.target.value)}
-                  aria-label="Filter by persona tier"
-                  className="h-9 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-medium text-[#17233B] focus:border-blue-600 focus:outline-none"
-                >
-                  <option value="all">All Persona Tiers</option>
-                  <option value="Primary Decision-Maker / Advisor">
-                    Primary Decision-Maker / Advisor
-                  </option>
-                  <option value="Ecosystem Multiplier">
-                    Ecosystem Multiplier
-                  </option>
-                  <option value="Adjacent EdTech Operator">
-                    Adjacent EdTech Operator
-                  </option>
-                  <option value="Low Fit">Low Fit</option>
-                </select>
-
-                <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
-                  <span>Min Score:</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={90}
-                    step={5}
-                    value={minScore}
-                    onChange={(e) => setMinScore(Number(e.target.value))}
-                    className="w-24 accent-[#0F3FBF]"
-                  />
-                  <span className="w-7 font-bold tabular-nums text-[#17233B]">
-                    {minScore}
-                  </span>
-                </label>
               </div>
-            </div>
 
-            <div
-              className={`grid grid-cols-1 gap-6 ${
-                activeTrack === "split" ? "xl:grid-cols-2" : ""
-              }`}
-            >
-              {/* TRACK A: ORIGINAL COMMENTERS */}
-              {(activeTrack === "split" || activeTrack === "commenters") && (
-                <div className="space-y-4 rounded-2xl border border-teal-200/80 bg-white p-5 shadow-[0_2px_8px_rgba(23,35,59,0.05)]">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-                    <div className="flex items-center gap-2.5">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-teal-50 text-teal-700">
-                        <Users className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <h2 className="text-base font-extrabold text-[#17233B]">
-                          Original Post Commenters ({filteredCommenters.length})
-                        </h2>
-                        <p className="text-xs text-slate-600">
-                          Deduplicated across posts · Direct engagement provenance preserved
-                        </p>
-                      </div>
-                    </div>
-                    <span className="rounded-full border border-teal-200 bg-teal-50 px-2.5 py-1 text-[11px] font-bold text-teal-800">
-                      Category: original_commenter
-                    </span>
-                  </div>
-
-                  {filteredCommenters.length === 0 ? (
-                    <div className="rounded-xl border border-dashed border-slate-300 bg-[#F7F9FC] p-6 text-center text-sm text-slate-600">
-                      {result.commenters.length === 0 ? (
+              <div className={`grid gap-6 ${track === "both" ? "lg:grid-cols-2" : ""}`}>
+                {track !== "lookalikes" && (
+                  <ResultColumn
+                    title="Commenters"
+                    subtitle="commented on the source posts"
+                    dot="bg-teal-600"
+                    empty={
+                      result.commenters.length === 0 ? (
                         <>
-                          No commenters retrieved for these posts yet.{" "}
+                          No commenters yet.{" "}
                           <button
                             type="button"
                             onClick={() => setShowSettings(true)}
-                            className="font-semibold text-teal-700 hover:underline"
+                            className="font-semibold text-brand hover:underline"
                           >
                             Add an Apify token or import commenters
                           </button>
                           , then run again.
                         </>
                       ) : (
-                        "No commenters match your current score or text filters."
-                      )}
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {filteredCommenters.map((commenter, idx) => (
-                        <CommenterCard
-                          key={commenter.id}
-                          commenter={commenter}
-                          rank={idx + 1}
-                          copiedId={copiedId}
-                          onCopy={handleCopyUrl}
-                          expanded={Boolean(expandedCommenterIds[commenter.id])}
-                          onToggleExpand={() =>
-                            setExpandedCommenterIds((prev) => ({
-                              ...prev,
-                              [commenter.id]: !prev[commenter.id],
-                            }))
-                          }
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* TRACK B: AI LOOKALIKES */}
-              {(activeTrack === "split" || activeTrack === "lookalikes") && (
-                <div className="space-y-4 rounded-2xl border border-violet-200/80 bg-white p-5 shadow-[0_2px_8px_rgba(23,35,59,0.05)]">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-                    <div className="flex items-center gap-2.5">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-50 text-violet-700">
-                        <GitBranch className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <h2 className="text-base font-extrabold text-[#17233B]">
-                          AI-Discovered Lookalike Profiles ({filteredLookalikes.length})
-                        </h2>
-                        <p className="text-xs text-slate-600">
-                          Matched from commenter seeds · Never mislabelled as commenters
-                        </p>
-                      </div>
-                    </div>
-                    <span className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-[11px] font-bold text-violet-800">
-                      Category: ai_lookalike_profile
-                    </span>
-                  </div>
-
-                  {filteredLookalikes.length === 0 ? (
-                    <div className="rounded-xl border border-dashed border-slate-300 bg-[#F7F9FC] p-6 text-center text-sm text-slate-600">
-                      {result.lookalikes.length === 0
-                        ? "Lookalike discovery requires at least 1 seed commenter profile."
-                        : "No lookalike profiles match your current score or text filters."}
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {filteredLookalikes.map((lookalike, idx) => (
-                        <LookalikeCard
-                          key={lookalike.id}
-                          lookalike={lookalike}
-                          rank={idx + 1}
-                          copiedId={copiedId}
-                          onCopy={handleCopyUrl}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </section>
+                        "No commenters match the filters."
+                      )
+                    }
+                  >
+                    {commenters.map((c, i) => (
+                      <CommenterCard key={c.id} c={c} rank={i + 1} copiedId={copiedId} onCopy={handleCopy} />
+                    ))}
+                  </ResultColumn>
+                )}
+                {track !== "commenters" && (
+                  <ResultColumn
+                    title="Lookalikes"
+                    subtitle="similar professionals, found from commenters"
+                    dot="bg-violet-600"
+                    empty={
+                      result.lookalikes.length === 0
+                        ? "Lookalikes need at least one commenter to use as a seed."
+                        : "No lookalikes match the filters."
+                    }
+                  >
+                    {lookalikes.map((l, i) => (
+                      <LookalikeCard key={l.id} l={l} rank={i + 1} copiedId={copiedId} onCopy={handleCopy} />
+                    ))}
+                  </ResultColumn>
+                )}
+              </div>
+            </section>
+          </>
         )}
       </main>
+
+      <footer className="border-t border-line py-5 text-center text-xs text-muted">
+        EDXSO Prospect Discovery · Public search index, licensed provider and user-supplied data only. No LinkedIn login
+        or scraping.
+      </footer>
 
       <MethodologyModal
         open={showMethodology}
@@ -991,305 +760,376 @@ export function DiscoveryDashboard() {
   );
 }
 
-function CommenterCard({
-  commenter,
-  rank,
-  copiedId,
-  onCopy,
-  expanded,
-  onToggleExpand,
+/* ---------- Small building blocks ---------- */
+
+function HeaderButton({
+  onClick,
+  label,
+  children,
 }: {
-  commenter: AnalyzedCommenter;
-  rank: number;
-  copiedId: string | null;
-  onCopy: (id: string, url: string) => void;
-  expanded: boolean;
-  onToggleExpand: () => void;
+  onClick: () => void;
+  label: string;
+  children: React.ReactNode;
 }) {
   return (
-    <article className="rounded-xl border border-slate-200 bg-[#F7F9FC]/45 p-4 transition hover:border-teal-300 hover:bg-white">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-md bg-teal-700 px-2 py-0.5 text-[11px] font-bold text-white tabular-nums">
-              #{rank}
-            </span>
-            <h3 className="text-base font-bold text-[#17233B]">
-              {commenter.name}
-            </h3>
-            <TierBadge tier={commenter.personaTier} />
-            {commenter.commentCount > 1 && (
-              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-900">
-                Deduplicated · {commenter.commentCount} comments
-              </span>
-            )}
-            <SourceBadge dataSource={commenter.dataSource} isTestData={commenter.isTestData} />
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      className="inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-xs font-semibold text-ink-soft transition hover:bg-cream-2 hover:text-ink"
+    >
+      {children}
+      <span className="hidden md:inline">{label}</span>
+    </button>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  hint,
+  accent = "text-ink",
+}: {
+  label: string;
+  value: number | string;
+  hint: string;
+  accent?: string;
+}) {
+  return (
+    <div className="rounded-xl border border-line bg-paper px-4 py-3.5">
+      <div className="text-xs font-medium text-muted">{label}</div>
+      <div className={`mt-0.5 text-2xl font-extrabold tabular-nums ${accent}`}>{value}</div>
+      <div className="text-[11px] text-muted">{hint}</div>
+    </div>
+  );
+}
+
+function SectionTitle({ title, count }: { title: string; count: number }) {
+  return (
+    <h2 className="flex items-baseline gap-2 text-base font-bold text-ink">
+      {title}
+      <span className="text-sm font-medium text-muted tabular-nums">{count}</span>
+    </h2>
+  );
+}
+
+function LoadingState({ live }: { live: boolean }) {
+  return (
+    <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-line-strong bg-paper/60 py-16 text-center">
+      <Loader2 className="h-6 w-6 animate-spin text-brand" />
+      <p className="mt-3 text-sm font-semibold text-ink">Running discovery…</p>
+      <p className="mt-1 text-xs text-muted">
+        {live
+          ? "Live runs take 20–40 seconds while posts, commenters and profiles are fetched."
+          : "This takes a few seconds."}
+      </p>
+    </div>
+  );
+}
+
+function ResultColumn({
+  title,
+  subtitle,
+  dot,
+  empty,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  dot: string;
+  empty: React.ReactNode;
+  children: React.ReactNode[];
+}) {
+  return (
+    <div className="min-w-0">
+      <div className="mb-3 flex flex-wrap items-baseline gap-x-2">
+        <span className={`h-2.5 w-2.5 self-center rounded-full ${dot}`} />
+        <h2 className="text-base font-bold text-ink">{title}</h2>
+        <span className="text-xs text-muted">{subtitle}</span>
+      </div>
+      {children.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-line-strong bg-paper/60 p-6 text-center text-sm text-muted">
+          {empty}
+        </div>
+      ) : (
+        <div className="space-y-3">{children}</div>
+      )}
+    </div>
+  );
+}
+
+function CardShell({
+  rank,
+  name,
+  score,
+  badges,
+  role,
+  organization,
+  location,
+  url,
+  id,
+  copiedId,
+  onCopy,
+  indicators,
+  summary,
+  accent,
+  details,
+}: {
+  rank: number;
+  name: string;
+  score: number;
+  badges: React.ReactNode;
+  role: string;
+  organization: string;
+  location: string | null;
+  url: string;
+  id: string;
+  copiedId: string | null;
+  onCopy: (id: string, url: string) => void;
+  indicators: string[];
+  summary: React.ReactNode;
+  accent: string;
+  details: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const shown = indicators.slice(0, 3);
+  const knownOrg = organization && !/not (provided|shown)/i.test(organization);
+  return (
+    <article className="rounded-xl border border-line bg-paper p-4 transition hover:border-line-strong">
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className={`text-xs font-bold tabular-nums ${accent}`}>#{rank}</span>
+            <h3 className="text-[15px] font-bold text-ink">{name}</h3>
+            {badges}
           </div>
-          {commenter.headline && commenter.headline !== commenter.currentRole && (
-            <p className="text-xs text-slate-500">{commenter.headline}</p>
-          )}
-          <p className="text-sm font-semibold text-slate-800">
-            {commenter.currentRole} ·{" "}
-            <span className="text-slate-600">{commenter.organization}</span>
+          <p className="mt-0.5 text-sm text-ink-soft">
+            {role}
+            {knownOrg && <span className="text-muted"> · {organization}</span>}
           </p>
-          {commenter.location && (
-            <p className="flex items-center gap-1 text-xs text-slate-500">
-              <MapPin className="h-3.5 w-3.5" />
-              {commenter.location}
+          {location && (
+            <p className="mt-0.5 flex items-center gap-1 text-xs text-muted">
+              <MapPin className="h-3 w-3" />
+              {location}
             </p>
           )}
         </div>
-
-        <ScoreRing score={commenter.relevanceScore} label="EDXSO" tone="teal" />
+        <ScorePill score={score} />
       </div>
 
-      {/* Complete LinkedIn URL */}
-      <ProfileUrlRow id={commenter.id} url={commenter.linkedinUrl} copiedId={copiedId} onCopy={onCopy} />
-
-      {/* School-Ecosystem Indicators */}
-      {commenter.schoolEcosystemIndicators.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {commenter.schoolEcosystemIndicators.map((tag) => (
-            <span
-              key={tag}
-              className="rounded-md border border-teal-200 bg-teal-50/70 px-2 py-0.5 text-[11px] font-semibold text-teal-800"
+      <div className="mt-3 flex items-center gap-2 rounded-lg bg-cream px-2.5 py-1.5">
+        {url ? (
+          <>
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-w-0 flex-1 items-center gap-1 truncate font-mono text-[11px] text-brand hover:underline"
             >
+              <ArrowUpRight className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{url.replace("https://www.", "")}</span>
+            </a>
+            <button
+              type="button"
+              onClick={() => onCopy(id, url)}
+              className="inline-flex shrink-0 items-center gap-1 text-[11px] font-semibold text-muted hover:text-ink"
+              aria-label="Copy profile URL"
+            >
+              {copiedId === id ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+              {copiedId === id ? "Copied" : "Copy"}
+            </button>
+          </>
+        ) : (
+          <span className="text-[11px] text-muted">Profile URL not available from this source</span>
+        )}
+      </div>
+
+      {shown.length > 0 && (
+        <div className="mt-2.5 flex flex-wrap gap-1">
+          {shown.map((tag) => (
+            <span key={tag} className="rounded-md bg-cream-2 px-1.5 py-0.5 text-[11px] font-medium text-ink-soft">
               {tag}
             </span>
           ))}
+          {indicators.length > shown.length && (
+            <span className="px-1 py-0.5 text-[11px] text-muted">+{indicators.length - shown.length}</span>
+          )}
         </div>
       )}
 
-      {/* AI Explanation */}
-      <AiChip ai={commenter.aiClassification} />
-      <p className="mt-2 text-xs leading-relaxed text-slate-700">
-        {commenter.relevanceExplanation}
-      </p>
+      {summary && <div className="mt-2.5 text-xs leading-relaxed text-ink-soft">{summary}</div>}
 
-      {/* Score Breakdown */}
-      <div className="mt-3 border-t border-slate-200/70 pt-3">
-        <BreakdownBars breakdown={commenter.scoreBreakdown} />
-      </div>
-
-      {/* Post Traceability & Comment Snippets */}
-      <div className="mt-3 border-t border-slate-200/70 pt-3">
-        <button
-          type="button"
-          onClick={onToggleExpand}
-          className="text-xs font-semibold text-teal-800 hover:underline"
-        >
-          {expanded ? "Hide" : "View"} source post traceability & comments (
-          {commenter.associatedPostUrls.length})
-        </button>
-
-        {expanded && (
-          <div className="mt-2 space-y-2">
-            {commenter.comments.map((cm, i) => (
-              <div
-                key={`${cm.postId}-${i}`}
-                className="rounded-lg border border-slate-200 bg-white p-2.5 text-xs"
-              >
-                <a
-                  href={cm.postUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block truncate font-mono text-[11px] font-medium text-blue-700 hover:underline"
-                >
-                  {cm.postUrl}
-                </a>
-                <p className="mt-1 text-slate-700">“{cm.text}”</p>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-muted hover:text-ink"
+        aria-expanded={open}
+      >
+        {open ? "Hide details" : "Why this score"}
+        <ChevronDown className={`h-3.5 w-3.5 transition ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && <div className="mt-3 space-y-3 border-t border-line pt-3">{details}</div>}
     </article>
+  );
+}
+
+function SourceBadge({ dataSource, isTestData }: { dataSource: DataSourceMode; isTestData: boolean }) {
+  if (isTestData) {
+    return <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-900">Test</span>;
+  }
+  if (dataSource === "supplied_url_manual") {
+    return <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-900">Imported</span>;
+  }
+  return null;
+}
+
+function AiLine({ ai }: { ai?: AiClassification }) {
+  if (!ai) return null;
+  return (
+    <p className="flex items-start gap-1.5 text-xs text-ink-soft">
+      <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand" />
+      <span>
+        <span className="font-semibold text-ink">Gemini: {ai.persona}</span> (fit {ai.fitScore}/100). {ai.rationale}
+      </span>
+    </p>
+  );
+}
+
+function CommenterCard({
+  c,
+  rank,
+  copiedId,
+  onCopy,
+}: {
+  c: AnalyzedCommenter;
+  rank: number;
+  copiedId: string | null;
+  onCopy: (id: string, url: string) => void;
+}) {
+  const firstComment = c.comments.find((m) => m.text)?.text;
+  return (
+    <CardShell
+      rank={rank}
+      name={c.name}
+      score={c.relevanceScore}
+      accent="text-teal-700"
+      badges={
+        <>
+          <TierBadge tier={c.personaTier} />
+          {c.commentCount > 1 && (
+            <span className="rounded-full bg-teal-50 px-1.5 py-0.5 text-[10px] font-bold text-teal-800 ring-1 ring-teal-200">
+              {c.commentCount} comments
+            </span>
+          )}
+          <SourceBadge dataSource={c.dataSource} isTestData={c.isTestData} />
+        </>
+      }
+      role={c.currentRole}
+      organization={c.organization}
+      location={c.location}
+      url={c.linkedinUrl}
+      id={c.id}
+      copiedId={copiedId}
+      onCopy={onCopy}
+      indicators={c.schoolEcosystemIndicators}
+      summary={firstComment ? <p className="line-clamp-2 italic">“{firstComment}”</p> : null}
+      details={
+        <>
+          <BreakdownBars breakdown={c.scoreBreakdown} />
+          <AiLine ai={c.aiClassification} />
+          <p className="text-xs leading-relaxed text-ink-soft">{c.relevanceExplanation}</p>
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+              Commented on {c.associatedPostUrls.length} post{c.associatedPostUrls.length === 1 ? "" : "s"}
+            </div>
+            <ul className="mt-1.5 space-y-1.5">
+              {c.comments.map((cm, i) => (
+                <li key={`${cm.postId}-${i}`} className="rounded-lg bg-cream p-2 text-xs">
+                  <a
+                    href={cm.postUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block truncate font-mono text-[11px] text-brand hover:underline"
+                  >
+                    {cm.postUrl.replace("https://www.", "")}
+                  </a>
+                  {cm.text && <p className="mt-0.5 text-ink-soft">“{cm.text}”</p>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </>
+      }
+    />
   );
 }
 
 function LookalikeCard({
-  lookalike,
+  l,
   rank,
   copiedId,
   onCopy,
 }: {
-  lookalike: LookalikeProfile;
+  l: LookalikeProfile;
   rank: number;
   copiedId: string | null;
   onCopy: (id: string, url: string) => void;
 }) {
+  const top = l.seedProfiles[0];
   return (
-    <article className="rounded-xl border border-slate-200 bg-[#F7F9FC]/45 p-4 transition hover:border-violet-300 hover:bg-white">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-md bg-violet-700 px-2 py-0.5 text-[11px] font-bold text-white tabular-nums">
-              #{rank}
-            </span>
-            <h3 className="text-base font-bold text-[#17233B]">
-              {lookalike.name}
-            </h3>
-            <TierBadge tier={lookalike.personaTier} />
-            <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-bold text-violet-800 tabular-nums">
-              {lookalike.similarityScore}% Seed Match
-            </span>
-            <SourceBadge dataSource={lookalike.dataSource} isTestData={lookalike.isTestData} />
-          </div>
-          {lookalike.headline && lookalike.headline !== lookalike.currentRole && (
-            <p className="text-xs text-slate-500">{lookalike.headline}</p>
-          )}
-          <p className="text-sm font-semibold text-slate-800">
-            {lookalike.currentRole} ·{" "}
-            <span className="text-slate-600">{lookalike.organization}</span>
+    <CardShell
+      rank={rank}
+      name={l.name}
+      score={l.relevanceScore}
+      accent="text-violet-700"
+      badges={
+        <>
+          <TierBadge tier={l.personaTier} />
+          <SourceBadge dataSource={l.dataSource} isTestData={l.isTestData} />
+        </>
+      }
+      role={l.currentRole}
+      organization={l.organization}
+      location={l.location}
+      url={l.linkedinUrl}
+      id={l.id}
+      copiedId={copiedId}
+      onCopy={onCopy}
+      indicators={l.schoolEcosystemIndicators}
+      summary={
+        top ? (
+          <p>
+            <span className="font-semibold text-violet-700 tabular-nums">{l.similarityScore}% similar</span> to{" "}
+            <span className="font-semibold text-ink">{top.seedCommenterName}</span>
+            {l.seedProfiles.length > 1 && <span className="text-muted"> and {l.seedProfiles.length - 1} more</span>}
           </p>
-          {lookalike.location && (
-            <p className="flex items-center gap-1 text-xs text-slate-500">
-              <MapPin className="h-3.5 w-3.5" />
-              {lookalike.location}
+        ) : null
+      }
+      details={
+        <>
+          <BreakdownBars breakdown={l.scoreBreakdown} isLookalike />
+          <AiLine ai={l.aiClassification} />
+          <p className="text-xs leading-relaxed text-ink-soft">{l.relevanceExplanation}</p>
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-muted">Seed commenters</div>
+            <ul className="mt-1.5 space-y-1 text-xs text-ink-soft">
+              {l.seedProfiles.map((s) => (
+                <li key={s.seedCommenterId}>
+                  <span className="font-semibold text-ink">{s.seedCommenterName}</span>{" "}
+                  <span className="font-semibold text-violet-700 tabular-nums">{s.similarityScore}%</span>: {s.rationale}
+                </li>
+              ))}
+            </ul>
+          </div>
+          {l.discoveredVia && l.discoveredVia.provider !== "labelled_test_dataset" && (
+            <p className="text-[11px] text-muted">
+              Found via public profile search{" "}
+              <code className="rounded bg-cream-2 px-1 font-mono text-ink-soft">{l.discoveredVia.query}</code>
             </p>
           )}
-        </div>
-
-        <ScoreRing
-          score={lookalike.relevanceScore}
-          label="EDXSO"
-          tone="violet"
-        />
-      </div>
-
-      {/* Complete LinkedIn URL */}
-      <ProfileUrlRow id={lookalike.id} url={lookalike.linkedinUrl} copiedId={copiedId} onCopy={onCopy} />
-
-      {/* Indicators */}
-      {lookalike.schoolEcosystemIndicators.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {lookalike.schoolEcosystemIndicators.map((tag) => (
-            <span
-              key={tag}
-              className="rounded-md border border-violet-200 bg-violet-50/70 px-2 py-0.5 text-[11px] font-semibold text-violet-800"
-            >
-              {tag}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* AI Explanation */}
-      <AiChip ai={lookalike.aiClassification} />
-      <p className="mt-2 text-xs leading-relaxed text-slate-700">
-        {lookalike.relevanceExplanation}
-      </p>
-
-      {/* Score Breakdown */}
-      <div className="mt-3 border-t border-slate-200/70 pt-3">
-        <BreakdownBars breakdown={lookalike.scoreBreakdown} isLookalike />
-      </div>
-
-      {/* Seed Profile Traceability */}
-      <div className="mt-3 rounded-xl border border-violet-200/70 bg-violet-50/40 p-3">
-        <div className="text-[11px] font-bold uppercase tracking-wider text-violet-900">
-          Seed Profile Traceability & Similarity Evidence
-        </div>
-        <div className="mt-2 space-y-1.5">
-          {lookalike.seedProfiles.map((seed) => (
-            <div key={seed.seedCommenterId} className="text-xs text-slate-700">
-              <span className="font-semibold text-[#17233B]">
-                {seed.seedCommenterName}
-              </span>{" "}
-              <span className="font-bold text-violet-700 tabular-nums">
-                ({seed.similarityScore}%)
-              </span>
-              : {seed.rationale}
-            </div>
-          ))}
-          {lookalike.discoveredVia && lookalike.discoveredVia.provider !== "labelled_test_dataset" && (
-            <div className="mt-1 border-t border-violet-200/70 pt-1.5 text-[11px] text-slate-600">
-              Found via public profile search{" "}
-              <code className="rounded bg-white px-1 font-mono">{lookalike.discoveredVia.query}</code>, built
-              from seed(s): {lookalike.discoveredVia.seedCommenterNames.join(", ")}
-            </div>
-          )}
-        </div>
-      </div>
-    </article>
-  );
-}
-
-function ProfileUrlRow({
-  id,
-  url,
-  copiedId,
-  onCopy,
-}: {
-  id: string;
-  url: string;
-  copiedId: string | null;
-  onCopy: (id: string, url: string) => void;
-}) {
-  if (!url) {
-    return (
-      <div className="mt-3 rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-slate-500">
-        Profile URL not available from this source
-      </div>
-    );
-  }
-  return (
-    <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
-      <a
-        href={url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex min-w-0 flex-1 items-center gap-1.5 truncate font-mono text-xs font-medium text-blue-700 hover:underline"
-      >
-        <ArrowUpRight className="h-3.5 w-3.5 shrink-0" />
-        <span className="truncate">{url}</span>
-      </a>
-      <button
-        type="button"
-        onClick={() => onCopy(id, url)}
-        className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
-      >
-        {copiedId === id ? (
-          <>
-            <Check className="h-3 w-3 text-emerald-600" />
-            Copied
-          </>
-        ) : (
-          <>
-            <Copy className="h-3 w-3" />
-            Copy URL
-          </>
-        )}
-      </button>
-    </div>
-  );
-}
-
-function SourceBadge({
-  dataSource,
-  isTestData,
-}: {
-  dataSource: DataSourceMode;
-  isTestData: boolean;
-}) {
-  const { label, cls } = isTestData
-    ? { label: "Test data", cls: "border-amber-200 bg-amber-50 text-amber-900" }
-    : dataSource === "authorized_provider"
-      ? { label: "Live provider", cls: "border-emerald-200 bg-emerald-50 text-emerald-900" }
-      : { label: "User import", cls: "border-sky-200 bg-sky-50 text-sky-900" };
-  return (
-    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${cls}`}>{label}</span>
-  );
-}
-
-function AiChip({ ai }: { ai?: AiClassification }) {
-  if (!ai) return null;
-  return (
-    <div className="mt-3 inline-flex flex-wrap items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/70 px-2 py-1 text-[11px] text-indigo-900">
-      <Sparkles className="h-3 w-3" />
-      <span className="font-bold">Gemini:</span>
-      <span>{ai.persona}</span>
-      <span className="font-bold tabular-nums">· fit {ai.fitScore}/100</span>
-    </div>
+        </>
+      }
+    />
   );
 }
