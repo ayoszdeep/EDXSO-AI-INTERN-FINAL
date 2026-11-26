@@ -77,7 +77,7 @@ export async function runDiscoveryPipeline(request: DiscoveryRequest): Promise<D
     const candTexts = candidatePool.map(
       (c) => `${c.headline}. ${c.currentRole} at ${c.organization}. ${c.experienceSummary} ${c.recentTopics.join(" ")}`
     );
-    const vectors = await embedTexts([...seedTexts, ...candTexts], geminiKey);
+    const { vectors, error: embedError } = await embedTexts([...seedTexts, ...candTexts], geminiKey);
     if (vectors) {
       const seedVec = new Map(commenters.map((c, i) => [c.id, vectors[i]]));
       const candVec = new Map(candidatePool.map((c, i) => [c.id, vectors[commenters.length + i]]));
@@ -89,7 +89,7 @@ export async function runDiscoveryPipeline(request: DiscoveryRequest): Promise<D
         return Math.max(0, Math.min(1, (cosineSimilarity(a, b) - 0.5) / 0.45));
       };
     } else {
-      warnings.push("Gemini embeddings unavailable; used local semantic similarity only.");
+      warnings.push(`Gemini embeddings unavailable (${embedError ?? "unknown"}); used local semantic similarity only.`);
     }
   }
 

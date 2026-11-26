@@ -90,37 +90,60 @@ export async function resolveGeminiModels(key: string): Promise<ModelChoice> {
   return { generate, embed: envEmbed || picked.embed };
 }
 
-/** Returns one vector per input text, or null if embeddings are unavailable. */
-export async function embedTexts(texts: string[], key: string): Promise<number[][] | null> {
-  if (texts.length === 0) return [];
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Returns one vector per input text, or `vectors: null` with the reason.
+ * Texts go in chunks of 25 (in parallel) and each chunk retries twice with
+ * backoff on rate limits / overload, which the free tier hits on bigger runs.
+ */
+export async function embedTexts(
+  texts: string[],
+  key: string
+): Promise<{ vectors: number[][] | null; error?: string }> {
+  if (texts.length === 0) return { vectors: [] };
   const { embed } = await resolveGeminiModels(key);
-  if (!embed) return null;
-  try {
-    const out: number[][] = [];
-    for (let i = 0; i < texts.length; i += 100) {
-      const chunk = texts.slice(i, i + 100);
-      const res = await fetch(`${API}/models/${embed}:batchEmbedContents`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-        body: JSON.stringify({
-          requests: chunk.map((text) => ({
-            model: `models/${embed}`,
-            content: { parts: [{ text: text.slice(0, 6000) }] },
-            taskType: "SEMANTIC_SIMILARITY",
-          })),
-        }),
-        signal: AbortSignal.timeout(20000),
-      });
-      if (!res.ok) return null;
-      const data = (await res.json()) as { embeddings?: Array<{ values?: number[] }> };
-      const vecs = (data.embeddings ?? []).map((e) => e.values ?? []);
-      if (vecs.length !== chunk.length || vecs.some((v) => v.length === 0)) return null;
-      out.push(...vecs);
+  if (!embed) return { vectors: null, error: "no embedding model available for this key" };
+
+  const embedChunk = async (chunk: string[]): Promise<number[][] | string> => {
+    let lastError = "unknown error";
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await sleep(1500 * attempt);
+      try {
+        const res = await fetch(`${API}/models/${embed}:batchEmbedContents`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+          body: JSON.stringify({
+            requests: chunk.map((text) => ({
+              model: `models/${embed}`,
+              content: { parts: [{ text: text.slice(0, 1500) }] },
+              taskType: "SEMANTIC_SIMILARITY",
+            })),
+          }),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!res.ok) {
+          lastError = res.status === 429 ? "rate limited (429)" : `HTTP ${res.status}`;
+          if (res.status === 429 || res.status >= 500) continue;
+          return lastError;
+        }
+        const data = (await res.json()) as { embeddings?: Array<{ values?: number[] }> };
+        const vecs = (data.embeddings ?? []).map((e) => e.values ?? []);
+        if (vecs.length !== chunk.length || vecs.some((v) => v.length === 0)) return "incomplete response";
+        return vecs;
+      } catch (err) {
+        lastError = err instanceof Error && /timeout|abort/i.test(err.name + err.message) ? "timed out" : "request failed";
+      }
     }
-    return out;
-  } catch {
-    return null;
-  }
+    return lastError;
+  };
+
+  const chunks: string[][] = [];
+  for (let i = 0; i < texts.length; i += 25) chunks.push(texts.slice(i, i + 25));
+  const results = await Promise.all(chunks.map(embedChunk));
+  const failure = results.find((r): r is string => typeof r === "string");
+  if (failure) return { vectors: null, error: failure };
+  return { vectors: (results as number[][][]).flat() };
 }
 
 export interface ClassificationInput {
