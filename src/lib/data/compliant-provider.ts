@@ -2,6 +2,7 @@ import {
   CandidateProfileRecord,
   DataSourceMode,
   DiscoveryRequest,
+  ImportedCommenter,
   LinkedInPost,
   RawCommentRecord,
 } from "@/lib/types";
@@ -12,355 +13,331 @@ import {
   TEST_RAW_COMMENTS,
 } from "@/lib/data/labelled-test-dataset";
 import { computeTextSimilarity } from "@/lib/engine/semantic";
+import {
+  activityIdToDate,
+  canonicalizeLinkedInUrl,
+  cleanLinkedInUrl,
+  extractActivityId,
+  extractPostAuthorHandle,
+  inferTopicsFromPostUrl,
+  isValidLinkedInPostUrl,
+} from "@/lib/data/linkedin-urls";
+import {
+  discoverLinkedInPosts,
+  hasSearchKey,
+  lookupPostInIndex,
+  resolveSearchKeys,
+  searchProviderName,
+  SearchKeys,
+} from "@/lib/data/providers/web-search";
+import { fetchCommentsFromApify, resolveApifyToken } from "@/lib/data/providers/apify";
 
-/**
- * Normalizes a LinkedIn URL so trailing slashes, protocol differences,
- * subdomains (`in.linkedin.com` -> `www.linkedin.com`), and tracking query
- * parameters (`?utm_source=...`, `?trk=...`) never prevent deduplication.
- */
-export function canonicalizeLinkedInUrl(rawUrl: string): string {
-  const trimmed = rawUrl.trim();
-  if (!trimmed) return "";
-
-  try {
-    const withProtocol = /^https?:\/\//i.test(trimmed)
-      ? trimmed
-      : `https://${trimmed}`;
-    const parsed = new URL(withProtocol);
-    const host = parsed.hostname.toLowerCase().endsWith("linkedin.com")
-      ? "www.linkedin.com"
-      : parsed.hostname.toLowerCase();
-    const cleanPath = parsed.pathname.replace(/\/+$/, "").toLowerCase();
-    return `https://${host}${cleanPath}`;
-  } catch {
-    return trimmed.replace(/\/+$/, "").toLowerCase();
-  }
-}
-
-export function isValidLinkedInPostUrl(rawUrl: string): boolean {
-  const canonical = canonicalizeLinkedInUrl(rawUrl);
-  return (
-    canonical.startsWith("https://www.linkedin.com/posts/") ||
-    canonical.startsWith("https://www.linkedin.com/feed/update/") ||
-    canonical.startsWith("https://www.linkedin.com/pulse/")
-  );
-}
-
-export function isValidLinkedInProfileUrl(rawUrl: string): boolean {
-  const canonical = canonicalizeLinkedInUrl(rawUrl);
-  return canonical.startsWith("https://www.linkedin.com/in/");
-}
-
-function inferTopicsFromPostUrl(url: string): string[] {
-  try {
-    const parsed = new URL(url);
-    const slug = parsed.pathname
-      .replace(/^\/posts\//i, "")
-      .replace(/activity-\d+.*/i, "");
-    const words = slug
-      .split(/[-_/]+/)
-      .filter((w) => w.length > 2 && !/^\d+$/.test(w));
-    return Array.from(new Set(words)).slice(0, 6);
-  } catch {
-    return ["LinkedIn Post"];
-  }
-}
-
-async function fetchPostsFromSerper(
-  query: string,
-  apiKey: string,
-  maxPosts: number
-): Promise<LinkedInPost[]> {
-  const searchQuery = `site:linkedin.com/posts ${query}`;
-  const response = await fetch("https://google.serper.dev/search", {
-    method: "POST",
-    headers: {
-      "X-API-KEY": apiKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ q: searchQuery, num: Math.min(maxPosts + 3, 10) }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Serper API returned status ${response.status}`);
-  }
-
-  const data = (await response.json()) as {
-    organic?: Array<{
-      title?: string;
-      link?: string;
-      snippet?: string;
-      date?: string;
-    }>;
-  };
-
-  const results = (data.organic ?? [])
-    .filter((item) => item.link && isValidLinkedInPostUrl(item.link))
-    .slice(0, maxPosts);
-
-  return results.map((item, idx) => {
-    const link = item.link!;
-    const title = item.title ?? "LinkedIn Post";
-    const authorGuess = title.split(" on LinkedIn")[0]?.split(" - ")[0] || "LinkedIn Author";
-    return {
-      id: `serper-post-${idx + 1}`,
-      url: link,
-      canonicalUrl: canonicalizeLinkedInUrl(link),
-      authorName: authorGuess,
-      authorRole: "Public LinkedIn Author (via Search Index)",
-      authorProfileUrl: "",
-      publishedAt: item.date || new Date().toISOString(),
-      snippet: item.snippet ?? title,
-      fullText: `${title}. ${item.snippet ?? ""}`.trim(),
-      topics: inferTopicsFromPostUrl(link),
-      engagementStats: { reactions: 0, comments: 0 },
-      relevanceToQuery: Math.max(0.6, 0.95 - idx * 0.05),
-      dataSource: "authorized_provider",
-      isTestData: false,
-    };
-  });
-}
-
-async function fetchPostsFromTavily(
-  query: string,
-  apiKey: string,
-  maxPosts: number
-): Promise<LinkedInPost[]> {
-  const response = await fetch("https://api.tavily.com/search", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      api_key: apiKey,
-      query: `site:linkedin.com/posts ${query}`,
-      max_results: Math.min(maxPosts + 3, 10),
-      search_depth: "basic",
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Tavily API returned status ${response.status}`);
-  }
-
-  const data = (await response.json()) as {
-    results?: Array<{
-      title?: string;
-      url?: string;
-      content?: string;
-      published_date?: string;
-    }>;
-  };
-
-  const results = (data.results ?? [])
-    .filter((item) => item.url && isValidLinkedInPostUrl(item.url))
-    .slice(0, maxPosts);
-
-  return results.map((item, idx) => {
-    const link = item.url!;
-    const title = item.title ?? "LinkedIn Post";
-    const authorGuess = title.split(" on LinkedIn")[0]?.split(" - ")[0] || "LinkedIn Author";
-    return {
-      id: `tavily-post-${idx + 1}`,
-      url: link,
-      canonicalUrl: canonicalizeLinkedInUrl(link),
-      authorName: authorGuess,
-      authorRole: "Public LinkedIn Author (via Tavily Index)",
-      authorProfileUrl: "",
-      publishedAt: item.published_date || new Date().toISOString(),
-      snippet: item.content?.slice(0, 220) ?? title,
-      fullText: `${title}. ${item.content ?? ""}`.trim(),
-      topics: inferTopicsFromPostUrl(link),
-      engagementStats: { reactions: 0, comments: 0 },
-      relevanceToQuery: Math.max(0.6, 0.95 - idx * 0.05),
-      dataSource: "authorized_provider",
-      isTestData: false,
-    };
-  });
-}
+// Re-exported so existing imports keep working
+export {
+  canonicalizeLinkedInUrl,
+  cleanLinkedInUrl,
+  isValidLinkedInPostUrl,
+  isValidLinkedInProfileUrl,
+} from "@/lib/data/linkedin-urls";
 
 export interface RetrievedSourceBundle {
   posts: LinkedInPost[];
   rawComments: RawCommentRecord[];
-  candidatePool: CandidateProfileRecord[];
+  /** Only set for the labelled test dataset; live runs source lookalikes from search after seeds are known. */
+  testCandidatePool: CandidateProfileRecord[] | null;
+  searchKeys: SearchKeys;
   dataSource: DataSourceMode;
   isTestData: boolean;
   complianceNotice: string;
+  warnings: string[];
+  providers: { posts: string; comments: string };
 }
 
 /**
- * Compliant Data Retrieval Orchestrator:
- * 1. Authorized Search Provider (Serper / Tavily) when configured and requested.
- * 2. User-Supplied Post URL & Engagement Import (`supplied_url_manual`).
- * 3. Clearly Labelled Test Dataset (`labelled_test_dataset`) as transparent evaluation baseline.
+ * Compliant data retrieval:
+ * 1. Labelled test dataset (explicit, or automatic when no live provider is configured).
+ * 2. Live: public search index (Serper/Tavily) for posts, a licensed comments provider
+ *    (Apify) when configured, and user-imported commenter exports.
  *
- * Never attempts unauthorized scraping or auth/CAPTCHA bypassing on LinkedIn.
+ * Never logs into LinkedIn, handles LinkedIn cookies, or fetches LinkedIn pages.
  */
-export async function retrieveCompliantData(
-  request: DiscoveryRequest
-): Promise<RetrievedSourceBundle> {
+export async function retrieveCompliantData(request: DiscoveryRequest): Promise<RetrievedSourceBundle> {
   const maxPosts = Math.min(Math.max(request.maxPosts ?? 5, 1), 10);
+  const searchKeys = resolveSearchKeys(request.apiKeys);
+  const apifyToken = resolveApifyToken(request.apiKeys?.apifyApiToken);
+  const imported = (request.manualInput?.commenters ?? []).filter((c) => c.name?.trim());
 
-  const serperKey =
-    request.apiKeys?.serperApiKey?.trim() || process.env.SERPER_API_KEY?.trim();
-  const tavilyKey =
-    request.apiKeys?.tavilyApiKey?.trim() || process.env.TAVILY_API_KEY?.trim();
-
-  // Mode B: Direct Post URL supplied by the user
   if (request.mode === "post_url") {
-    const suppliedUrl = (request.postUrl || request.manualInput?.postUrl || "").trim();
-    if (!suppliedUrl || !isValidLinkedInPostUrl(suppliedUrl)) {
-      throw new Error(
-        "Please supply a valid LinkedIn post URL (e.g., https://www.linkedin.com/posts/... or https://www.linkedin.com/feed/update/...)."
-      );
-    }
-
-    const canonicalSupplied = canonicalizeLinkedInUrl(suppliedUrl);
-
-    // Check if the user supplied one of the clearly labelled test-dataset post URLs
-    const matchedTestPost = TEST_LINKEDIN_POSTS.find(
-      (p) => p.canonicalUrl === canonicalSupplied
-    );
-
-    // Check if user also provided manual/exported commenters
-    const manualCommenters = request.manualInput?.commenters ?? [];
-
-    if (matchedTestPost && manualCommenters.length === 0 && request.dataSource !== "supplied_url_manual") {
-      const postComments = TEST_RAW_COMMENTS.filter(
-        (c) => c.postId === matchedTestPost.id
-      );
-      return {
-        posts: [{ ...matchedTestPost, relevanceToQuery: 1 }],
-        rawComments: postComments,
-        candidatePool: TEST_CANDIDATE_POOL,
-        dataSource: "labelled_test_dataset",
-        isTestData: true,
-        complianceNotice: `${TEST_DATASET_NOTICE} (Matched test fixture post URL directly.)`,
-      };
-    }
-
-    // User supplied a real or custom LinkedIn post URL + optional exported engagement
-    const customPost: LinkedInPost = {
-      id: "supplied-post-1",
-      url: suppliedUrl,
-      canonicalUrl: canonicalSupplied,
-      authorName:
-        request.manualInput?.postAuthorName?.trim() ||
-        "User-Supplied Post Author",
-      authorRole:
-        request.manualInput?.postAuthorRole?.trim() ||
-        "Provided via Direct Post URL",
-      authorProfileUrl:
-        request.manualInput?.postAuthorProfileUrl?.trim() || "",
-      publishedAt:
-        request.manualInput?.postDate?.trim() || new Date().toISOString(),
-      snippet:
-        request.manualInput?.postSnippet?.trim() ||
-        `User-supplied LinkedIn post (${inferTopicsFromPostUrl(suppliedUrl).join(", ") || "direct URL"}).`,
-      fullText:
-        request.manualInput?.postSnippet?.trim() ||
-        `Direct LinkedIn post URL submitted for analysis: ${suppliedUrl}`,
-      topics: inferTopicsFromPostUrl(suppliedUrl),
-      engagementStats: {
-        reactions: 0,
-        comments: manualCommenters.length,
-      },
-      relevanceToQuery: 1,
-      dataSource: "supplied_url_manual",
-      isTestData: false,
-    };
-
-    const rawComments: RawCommentRecord[] = manualCommenters
-      .filter((c) => c.name?.trim() && c.linkedinUrl?.trim())
-      .map((c, idx) => ({
-        commentId: `manual-cmt-${idx + 1}`,
-        postId: customPost.id,
-        postUrl: customPost.url,
-        authorName: c.name.trim(),
-        authorProfileUrl: c.linkedinUrl.trim(),
-        headline: [c.currentRole, c.organization].filter(Boolean).join(" at ") || "LinkedIn Member",
-        currentRole: c.currentRole?.trim() || "Role not specified",
-        organization: c.organization?.trim() || "Organization not specified",
-        location: c.location?.trim() || null,
-        commentText:
-          c.commentText?.trim() || "Engaged on user-supplied LinkedIn post.",
-        commentedAt: customPost.publishedAt,
-        experienceSummary: c.headline?.trim() || `${c.currentRole ?? ""} ${c.organization ?? ""}`.trim(),
-        skills: [],
-        schoolNetworkSignals: [],
-        dataSource: "supplied_url_manual",
-        isTestData: false,
-      }));
-
-    return {
-      posts: [customPost],
-      rawComments,
-      // Lookalike candidate pool uses the labelled test directory unless an authorized provider returns candidates,
-      // and we keep each record's `isTestData` / `dataSource` flag intact!
-      candidatePool: TEST_CANDIDATE_POOL,
-      dataSource: "supplied_url_manual",
-      isTestData: rawComments.length === 0,
-      complianceNotice:
-        rawComments.length > 0
-          ? "Processed user-supplied LinkedIn post URL and user-imported commenter records compliantly (no unauthorized scraping). Lookalike candidates are matched from the clearly labelled evaluation candidate directory."
-          : "Processed user-supplied LinkedIn post URL without unauthorized scraping. LinkedIn blocks unauthenticated comment retrieval; paste or import commenter records (CSV/JSON) in the Manual Engagement panel to analyze and seed lookalikes from this post.",
-    };
+    return retrieveForPostUrl(request, searchKeys, apifyToken, imported);
   }
 
-  // Mode A: Keyword Search
   const query = (request.query || "K12 B2B Sales").trim();
+  const wantsTest =
+    request.dataSource === "labelled_test_dataset" ||
+    (request.dataSource === undefined && !hasSearchKey(searchKeys));
 
-  if (request.dataSource === "authorized_provider" && (serperKey || tavilyKey)) {
-    const posts = serperKey
-      ? await fetchPostsFromSerper(query, serperKey, maxPosts)
-      : await fetchPostsFromTavily(query, tavilyKey!, maxPosts);
+  if (wantsTest) return testDatasetForQuery(query, maxPosts);
 
+  if (!hasSearchKey(searchKeys)) {
+    throw new Error(
+      "Live keyword search needs a search index key. Set SERPER_API_KEY (or TAVILY_API_KEY) on the server, add one under Providers & Import, or switch to the labelled test dataset."
+    );
+  }
+
+  const warnings: string[] = [];
+  const posts = await discoverLinkedInPosts(query, searchKeys, maxPosts);
+  if (posts.length === 0) {
+    throw new Error(`The public search index returned no LinkedIn posts for "${query}". Try a broader phrase.`);
+  }
+  if (posts.length < maxPosts) {
+    warnings.push(`Only ${posts.length} public LinkedIn post(s) are indexed for "${query}".`);
+  }
+
+  const { comments, commentsProvider } = await gatherComments({
+    posts,
+    apifyToken,
+    imported,
+    warnings,
+    singlePost: false,
+  });
+
+  return {
+    posts: withCommentCounts(posts, comments),
+    rawComments: comments,
+    testCandidatePool: null,
+    searchKeys,
+    dataSource: "authorized_provider",
+    isTestData: false,
+    complianceNotice: liveNotice(searchProviderName(searchKeys), commentsProvider),
+    warnings,
+    providers: { posts: `${searchProviderName(searchKeys)} public search index`, comments: commentsProvider },
+  };
+}
+
+async function retrieveForPostUrl(
+  request: DiscoveryRequest,
+  searchKeys: SearchKeys,
+  apifyToken: string | undefined,
+  imported: ImportedCommenter[]
+): Promise<RetrievedSourceBundle> {
+  const suppliedUrl = (request.postUrl || request.manualInput?.postUrl || "").trim();
+  if (!suppliedUrl || !isValidLinkedInPostUrl(suppliedUrl)) {
+    throw new Error(
+      "Please supply a valid LinkedIn post URL (https://www.linkedin.com/posts/..., /feed/update/urn:li:activity:..., or /pulse/...)."
+    );
+  }
+  const canonicalSupplied = canonicalizeLinkedInUrl(suppliedUrl);
+  const suppliedActivity = extractActivityId(suppliedUrl);
+
+  const matchedTestPost = TEST_LINKEDIN_POSTS.find(
+    (p) => p.canonicalUrl === canonicalSupplied || (suppliedActivity && extractActivityId(p.url) === suppliedActivity)
+  );
+  if (matchedTestPost && imported.length === 0) {
     return {
-      posts,
-      rawComments: [],
-      candidatePool: TEST_CANDIDATE_POOL,
-      dataSource: "authorized_provider",
-      isTestData: false,
-      complianceNotice:
-        "Posts retrieved via authorized public search index API (Serper/Tavily). Because LinkedIn restricts unauthenticated comment extraction, import post commenters via the Manual Engagement Import drawer or switch to Clearly Labelled Test Dataset mode for full end-to-end demo data.",
+      posts: [{ ...matchedTestPost, relevanceToQuery: 1 }],
+      rawComments: TEST_RAW_COMMENTS.filter((c) => c.postId === matchedTestPost.id),
+      testCandidatePool: TEST_CANDIDATE_POOL,
+      searchKeys,
+      dataSource: "labelled_test_dataset",
+      isTestData: true,
+      complianceNotice: `${TEST_DATASET_NOTICE} (Matched a test fixture post URL.)`,
+      warnings: [],
+      providers: { posts: "labelled test dataset", comments: "labelled test dataset" },
     };
   }
 
-  // Clearly Labelled Test Dataset Mode (Default evaluation workflow)
+  const warnings: string[] = [];
+  const manual = request.manualInput;
+
+  // Post metadata: user-entered fields > public search index > what the URL itself encodes
+  let indexed: LinkedInPost | null = null;
+  if (hasSearchKey(searchKeys) && !(manual?.postAuthorName && manual?.postSnippet)) {
+    try {
+      indexed = await lookupPostInIndex(suppliedUrl, searchKeys);
+    } catch (err) {
+      warnings.push(`Post metadata lookup failed: ${err instanceof Error ? err.message : "unknown error"}`);
+    }
+  }
+  const handle = extractPostAuthorHandle(suppliedUrl);
+  const topics = inferTopicsFromPostUrl(suppliedUrl);
+  const post: LinkedInPost = {
+    id: suppliedActivity ? `post-${suppliedActivity}` : "supplied-post-1",
+    url: cleanLinkedInUrl(suppliedUrl),
+    canonicalUrl: canonicalSupplied,
+    authorName:
+      manual?.postAuthorName?.trim() || indexed?.authorName || (handle ? `@${handle}` : "Author not available"),
+    authorRole:
+      manual?.postAuthorRole?.trim() || indexed?.authorRole || (handle ? `linkedin.com/posts/${handle}` : "User-supplied post"),
+    authorProfileUrl: manual?.postAuthorProfileUrl?.trim() || "",
+    publishedAt: manual?.postDate?.trim() || activityIdToDate(suppliedActivity) || indexed?.publishedAt || "",
+    snippet:
+      manual?.postSnippet?.trim() ||
+      indexed?.snippet ||
+      (topics.length > 0 ? `Post topics from URL: ${topics.join(", ")}` : "Post text not available without login."),
+    fullText: manual?.postSnippet?.trim() || indexed?.fullText || topics.join(" "),
+    topics,
+    engagementStats: { reactions: 0, comments: 0 },
+    relevanceToQuery: 1,
+    dataSource: indexed ? "authorized_provider" : "supplied_url_manual",
+    isTestData: false,
+  };
+
+  const { comments, commentsProvider } = await gatherComments({
+    posts: [post],
+    apifyToken,
+    imported,
+    warnings,
+    singlePost: true,
+  });
+
+  return {
+    posts: withCommentCounts([post], comments),
+    rawComments: comments,
+    testCandidatePool: null,
+    searchKeys,
+    dataSource: comments.some((c) => c.dataSource === "authorized_provider") ? "authorized_provider" : "supplied_url_manual",
+    isTestData: false,
+    complianceNotice: liveNotice(indexed ? searchProviderName(searchKeys) : "user-supplied URL", commentsProvider),
+    warnings,
+    providers: {
+      posts: indexed ? `${searchProviderName(searchKeys)} public search index` : "user-supplied URL",
+      comments: commentsProvider,
+    },
+  };
+}
+
+async function gatherComments(params: {
+  posts: LinkedInPost[];
+  apifyToken: string | undefined;
+  imported: ImportedCommenter[];
+  warnings: string[];
+  singlePost: boolean;
+}): Promise<{ comments: RawCommentRecord[]; commentsProvider: string }> {
+  const { posts, apifyToken, imported, warnings, singlePost } = params;
+  const comments: RawCommentRecord[] = [];
+  const sources: string[] = [];
+
+  if (apifyToken) {
+    try {
+      const fetched = await fetchCommentsFromApify({ posts, token: apifyToken });
+      comments.push(...fetched);
+      sources.push("Apify licensed provider");
+      if (fetched.length === 0) {
+        warnings.push("The comments provider returned no public comments for the selected post(s).");
+      }
+    } catch (err) {
+      warnings.push(`Comments provider error: ${err instanceof Error ? err.message : "unknown error"}`);
+    }
+  }
+
+  if (imported.length > 0) {
+    const importedRecords = mapImportedCommenters(imported, posts, singlePost);
+    comments.push(...importedRecords);
+    sources.push("user import");
+    const skipped = imported.length - importedRecords.length;
+    if (skipped > 0) {
+      warnings.push(
+        `${skipped} imported row(s) skipped: in keyword mode each row needs a postUrl that matches one of the discovered posts.`
+      );
+    }
+    const withoutUrl = importedRecords.filter((r) => !r.authorProfileUrl).length;
+    if (withoutUrl > 0) {
+      warnings.push(`${withoutUrl} imported commenter(s) have no profile URL in the source (shown as "URL not available").`);
+    }
+  }
+
+  if (!apifyToken && imported.length === 0) {
+    warnings.push(
+      "No comments source configured. LinkedIn has no public comments API: add an Apify token (licensed provider) or import the commenters (CSV/JSON/copied text) under Providers & Import."
+    );
+  }
+
+  return { comments, commentsProvider: sources.length > 0 ? sources.join(" + ") : "none configured" };
+}
+
+export function mapImportedCommenters(
+  imported: ImportedCommenter[],
+  posts: LinkedInPost[],
+  singlePost: boolean
+): RawCommentRecord[] {
+  const out: RawCommentRecord[] = [];
+  imported.forEach((c, idx) => {
+    let post: LinkedInPost | undefined;
+    if (c.postUrl) {
+      const act = extractActivityId(c.postUrl);
+      post = posts.find(
+        (p) =>
+          p.canonicalUrl === canonicalizeLinkedInUrl(c.postUrl!) ||
+          (act !== null && extractActivityId(p.url) === act)
+      );
+    }
+    if (!post && singlePost) post = posts[0];
+    if (!post) return;
+
+    const role = c.currentRole?.trim() || "";
+    const org = c.organization?.trim() || "";
+    const headline = c.headline?.trim() || [role, org].filter(Boolean).join(" at ");
+    out.push({
+      commentId: `import-${idx + 1}`,
+      postId: post.id,
+      postUrl: post.url,
+      authorName: c.name.trim(),
+      authorProfileUrl: c.linkedinUrl?.trim() || "",
+      headline: headline || "Headline not provided",
+      currentRole: role || "Role not provided",
+      organization: org || "Organization not provided",
+      location: c.location?.trim() || null,
+      commentText: c.commentText?.trim() || "",
+      commentedAt: post.publishedAt,
+      experienceSummary: headline,
+      skills: [],
+      schoolNetworkSignals: [],
+      dataSource: "supplied_url_manual",
+      isTestData: false,
+    });
+  });
+  return out;
+}
+
+function withCommentCounts(posts: LinkedInPost[], comments: RawCommentRecord[]): LinkedInPost[] {
+  return posts.map((p) => ({
+    ...p,
+    engagementStats: {
+      ...p.engagementStats,
+      comments: comments.filter((c) => c.postId === p.id).length,
+    },
+  }));
+}
+
+function liveNotice(postsSource: string, commentsSource: string): string {
+  return `Live data. Posts: ${postsSource}. Commenters: ${commentsSource}. Lookalikes: public profile search seeded by the commenters. No LinkedIn login, cookies, or direct LinkedIn page fetching is used.`;
+}
+
+function testDatasetForQuery(query: string, maxPosts: number): RetrievedSourceBundle {
   const rankedPosts = TEST_LINKEDIN_POSTS.map((post) => {
     const postCorpus = `${post.snippet} ${post.fullText} ${post.topics.join(" ")} ${post.authorRole}`;
     const sim = computeTextSimilarity(query, postCorpus);
-    // Blend semantic query similarity with recency & curated relevance
-    const combinedScore = Math.min(
-      0.99,
-      Math.max(0.15, sim * 0.65 + post.relevanceToQuery * 0.35)
-    );
-    return {
-      ...post,
-      relevanceToQuery: Number(combinedScore.toFixed(3)),
-    };
+    const combinedScore = Math.min(0.99, Math.max(0.15, sim * 0.65 + post.relevanceToQuery * 0.35));
+    return { ...post, relevanceToQuery: Number(combinedScore.toFixed(3)) };
   })
     .sort((a, b) => {
       if (Math.abs(b.relevanceToQuery - a.relevanceToQuery) > 0.08) {
         return b.relevanceToQuery - a.relevanceToQuery;
       }
-      return (
-        new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
-      );
+      return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
     })
     .slice(0, maxPosts);
 
   const selectedIds = new Set(rankedPosts.map((p) => p.id));
-  const rawComments = TEST_RAW_COMMENTS.filter((c) =>
-    selectedIds.has(c.postId)
-  );
-
   return {
     posts: rankedPosts,
-    rawComments,
-    candidatePool: TEST_CANDIDATE_POOL,
+    rawComments: TEST_RAW_COMMENTS.filter((c) => selectedIds.has(c.postId)),
+    testCandidatePool: TEST_CANDIDATE_POOL,
+    searchKeys: {},
     dataSource: "labelled_test_dataset",
     isTestData: true,
     complianceNotice: TEST_DATASET_NOTICE,
+    warnings: [],
+    providers: { posts: "labelled test dataset", comments: "labelled test dataset" },
   };
 }

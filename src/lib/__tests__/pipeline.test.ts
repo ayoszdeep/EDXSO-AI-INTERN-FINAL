@@ -80,7 +80,10 @@ test("Direct post URL mode processes a single post directly and supports manual 
   assert.equal(result.commenters.length, 1);
   assert.equal(result.commenters[0].name, "Suresh Iyer");
   assert.ok(result.commenters[0].relevanceScore >= 65);
-  assert.ok(result.lookalikes.length > 0);
+  assert.equal(result.isTestData, false);
+  // Real seeds must never be paired with test-dataset lookalikes; without a search key there are none
+  assert.equal(result.lookalikes.length, 0);
+  assert.ok(result.warnings.some((w) => w.includes("Lookalike discovery on live data needs a search index key")));
 });
 
 test("Lookalikes are strictly separated from original commenters and carry seed traceability", async () => {

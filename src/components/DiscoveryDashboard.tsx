@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  AiClassification,
   AnalyzedCommenter,
   DataSourceMode,
   DiscoveryRequest,
@@ -14,6 +15,7 @@ import { MethodologyModal } from "@/components/MethodologyModal";
 import {
   OptionalApiKeys,
   parseCommentersText,
+  ServerProviders,
   SettingsModal,
 } from "@/components/SettingsModal";
 import {
@@ -26,6 +28,7 @@ import {
   ExternalLink,
   Filter,
   GitBranch,
+  Info,
   Link2,
   Loader2,
   MapPin,
@@ -58,7 +61,7 @@ const WORKFLOW_STAGES = [
 export function DiscoveryDashboard() {
   const [mode, setMode] = useState<SearchInputMode>("keyword");
   const [query, setQuery] = useState("K12 B2B Sales");
-  const [postUrl, setPostUrl] = useState(SAMPLE_TEST_POST_URL);
+  const [postUrl, setPostUrl] = useState("");
   const [dataSourcePref, setDataSourcePref] = useState<DataSourceMode>(
     "labelled_test_dataset"
   );
@@ -82,9 +85,15 @@ export function DiscoveryDashboard() {
   const [showSettings, setShowSettings] = useState(false);
   const [apiKeys, setApiKeys] = useState<OptionalApiKeys>({
     geminiApiKey: "",
-    openAiApiKey: "",
     serperApiKey: "",
     tavilyApiKey: "",
+    apifyApiToken: "",
+  });
+  const [serverProviders, setServerProviders] = useState<ServerProviders>({
+    serper: false,
+    tavily: false,
+    apify: false,
+    gemini: false,
   });
   const [manualCommentersRaw, setManualCommentersRaw] = useState("");
   const [exportingFormat, setExportingFormat] = useState<"csv" | "json" | null>(
@@ -108,17 +117,17 @@ export function DiscoveryDashboard() {
           maxPosts: 5,
           maxLookalikes: 12,
           manualInput:
-            effectiveMode === "post_url" && parsedManual.length > 0
+            parsedManual.length > 0
               ? {
-                  postUrl: targetPostUrl,
+                  postUrl: effectiveMode === "post_url" ? targetPostUrl : undefined,
                   commenters: parsedManual,
                 }
               : undefined,
           apiKeys: {
-            geminiApiKey: apiKeys.geminiApiKey || undefined,
-            openAiApiKey: apiKeys.openAiApiKey || undefined,
-            serperApiKey: apiKeys.serperApiKey || undefined,
-            tavilyApiKey: apiKeys.tavilyApiKey || undefined,
+            geminiApiKey: apiKeys.geminiApiKey.trim() || undefined,
+            serperApiKey: apiKeys.serperApiKey.trim() || undefined,
+            tavilyApiKey: apiKeys.tavilyApiKey.trim() || undefined,
+            apifyApiToken: apiKeys.apifyApiToken.trim() || undefined,
           },
         };
 
@@ -146,12 +155,26 @@ export function DiscoveryDashboard() {
 
   useEffect(() => {
     let active = true;
+    fetch("/api/health")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { providersConfigured?: ServerProviders } | null) => {
+        if (!active || !data?.providersConfigured) return;
+        setServerProviders(data.providersConfigured);
+        if (data.providersConfigured.serper || data.providersConfigured.tavily) {
+          setDataSourcePref("authorized_provider");
+        }
+      })
+      .catch(() => {
+        // health is advisory only
+      });
+    // First paint runs the free, clearly labelled test dataset so no provider credit is spent on page load
     fetch("/api/discover", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         mode: "keyword",
         query: "K12 B2B Sales",
+        dataSource: "labelled_test_dataset",
         maxPosts: 5,
         maxLookalikes: 12,
       }),
@@ -256,8 +279,27 @@ export function DiscoveryDashboard() {
   }, [result, minScore, tierFilter, textFilter]);
 
   const hasLiveSearchKey = Boolean(
-    apiKeys.serperApiKey.trim() || apiKeys.tavilyApiKey.trim()
+    apiKeys.serperApiKey.trim() ||
+      apiKeys.tavilyApiKey.trim() ||
+      serverProviders.serper ||
+      serverProviders.tavily
   );
+  const hasCommentsSource = Boolean(
+    apiKeys.apifyApiToken.trim() || serverProviders.apify || manualCommentersRaw.trim()
+  );
+  const importedCount = useMemo(
+    () => parseCommentersText(manualCommentersRaw).length,
+    [manualCommentersRaw]
+  );
+
+  // Verify (not just claim) that no lookalike is also a commenter
+  const overlapCount = useMemo(() => {
+    if (!result) return 0;
+    const urls = new Set(
+      result.commenters.map((c) => c.canonicalLinkedinUrl).filter(Boolean)
+    );
+    return result.lookalikes.filter((l) => urls.has(l.canonicalLinkedinUrl)).length;
+  }, [result]);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -348,6 +390,10 @@ export function DiscoveryDashboard() {
                 <p className="mt-0.5 leading-relaxed opacity-90">
                   {result.complianceNotice}
                 </p>
+                <p className="mt-1 text-[11px] opacity-80">
+                  Posts: {result.providers.posts} · Comments: {result.providers.comments} · Lookalikes:{" "}
+                  {result.providers.lookalikes} · Ranking: {result.providers.ai}
+                </p>
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2 text-xs font-semibold">
@@ -355,6 +401,20 @@ export function DiscoveryDashboard() {
                 AI: {result.aiMethod}
               </span>
             </div>
+          </div>
+        )}
+
+        {result && result.warnings.length > 0 && (
+          <div className="rounded-2xl border border-blue-200 bg-blue-50/70 p-4 text-xs text-blue-950">
+            <div className="flex items-center gap-2 font-bold">
+              <Info className="h-4 w-4 text-blue-700" />
+              Run notes
+            </div>
+            <ul className="mt-1.5 list-disc space-y-0.5 pl-5">
+              {result.warnings.map((w) => (
+                <li key={w}>{w}</li>
+              ))}
+            </ul>
           </div>
         )}
 
@@ -435,7 +495,7 @@ export function DiscoveryDashboard() {
                 </div>
               )}
 
-              {hasLiveSearchKey && mode === "keyword" && (
+              {mode === "keyword" && (
                 <select
                   value={dataSourcePref}
                   onChange={(e) =>
@@ -444,12 +504,10 @@ export function DiscoveryDashboard() {
                   aria-label="Data source mode"
                   className="h-12 rounded-xl border border-slate-300 bg-white px-3 text-sm font-medium text-[#17233B] focus:border-[#0F3FBF] focus:outline-none"
                 >
-                  <option value="labelled_test_dataset">
-                    Test Dataset (Full Pipeline)
+                  <option value="authorized_provider" disabled={!hasLiveSearchKey}>
+                    Live LinkedIn data{hasLiveSearchKey ? "" : " (add Serper key)"}
                   </option>
-                  <option value="authorized_provider">
-                    Authorized Live Search API
-                  </option>
+                  <option value="labelled_test_dataset">Labelled test dataset</option>
                 </select>
               )}
 
@@ -461,7 +519,9 @@ export function DiscoveryDashboard() {
                 {loading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Running Pipeline...
+                    {dataSourcePref === "authorized_provider" || mode === "post_url"
+                      ? "Fetching live data (up to ~1 min)..."
+                      : "Running Pipeline..."}
                   </>
                 ) : (
                   <>
@@ -496,13 +556,13 @@ export function DiscoveryDashboard() {
             ) : (
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span>Test a sample post URL:</span>
+                  <span>Paste any public LinkedIn post URL, or</span>
                   <button
                     type="button"
                     onClick={() => setPostUrl(SAMPLE_TEST_POST_URL)}
                     className="font-semibold text-blue-700 hover:underline"
                   >
-                    Autofill K12 Trustee Post URL
+                    use a labelled test-dataset post
                   </button>
                 </div>
                 <button
@@ -510,7 +570,11 @@ export function DiscoveryDashboard() {
                   onClick={() => setShowSettings(true)}
                   className="font-semibold text-teal-700 hover:underline"
                 >
-                  Paste / import custom commenters for live URLs →
+                  {importedCount > 0
+                    ? `${importedCount} imported commenter(s) ready · edit →`
+                    : hasCommentsSource
+                      ? "Commenters via Apify · import more →"
+                      : "Commenters: add Apify token or import a list →"}
                 </button>
               </div>
             )}
@@ -603,11 +667,13 @@ export function DiscoveryDashboard() {
                 <div className="text-xs font-semibold text-slate-500">
                   Category Isolation
                 </div>
-                <div className="mt-1 text-lg font-extrabold text-emerald-700">
-                  100% Verified
+                <div
+                  className={`mt-1 text-lg font-extrabold ${overlapCount === 0 ? "text-emerald-700" : "text-red-700"}`}
+                >
+                  {overlapCount === 0 ? "Verified" : `${overlapCount} overlap(s)`}
                 </div>
                 <div className="mt-0.5 text-[11px] text-slate-500">
-                  Zero commenter/lookalike overlap
+                  Commenter/lookalike URL overlap checked in browser
                 </div>
               </div>
             </div>
@@ -640,7 +706,10 @@ export function DiscoveryDashboard() {
                         Post #{index + 1} · {Math.round(post.relevanceToQuery * 100)}% match
                       </span>
                       <span className="text-[11px] font-medium text-slate-500 tabular-nums">
-                        {post.publishedAt.slice(0, 10)}
+                        {post.publishedAt ? post.publishedAt.slice(0, 10) : "Date n/a"}
+                        {" · "}
+                        {post.engagementStats.comments} comment
+                        {post.engagementStats.comments === 1 ? "" : "s"}
                       </span>
                     </div>
 
@@ -817,9 +886,21 @@ export function DiscoveryDashboard() {
 
                   {filteredCommenters.length === 0 ? (
                     <div className="rounded-xl border border-dashed border-slate-300 bg-[#F7F9FC] p-6 text-center text-sm text-slate-600">
-                      {result.commenters.length === 0
-                        ? "No commenter records extracted yet for this source. Import user-supplied commenters via Providers & Import, or switch to the Clearly Labelled Test Dataset."
-                        : "No commenters match your current score or text filters."}
+                      {result.commenters.length === 0 ? (
+                        <>
+                          No commenters retrieved for these posts yet.{" "}
+                          <button
+                            type="button"
+                            onClick={() => setShowSettings(true)}
+                            className="font-semibold text-teal-700 hover:underline"
+                          >
+                            Add an Apify token or import commenters
+                          </button>
+                          , then run again.
+                        </>
+                      ) : (
+                        "No commenters match your current score or text filters."
+                      )}
                     </div>
                   ) : (
                     <div className="space-y-4">
@@ -904,6 +985,7 @@ export function DiscoveryDashboard() {
         onSaveApiKeys={setApiKeys}
         manualCommentersRaw={manualCommentersRaw}
         onSaveManualCommentersRaw={setManualCommentersRaw}
+        serverProviders={serverProviders}
       />
     </div>
   );
@@ -938,10 +1020,14 @@ function CommenterCard({
             <TierBadge tier={commenter.personaTier} />
             {commenter.commentCount > 1 && (
               <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-900">
-                Deduplicated · {commenter.commentCount} posts
+                Deduplicated · {commenter.commentCount} comments
               </span>
             )}
+            <SourceBadge dataSource={commenter.dataSource} isTestData={commenter.isTestData} />
           </div>
+          {commenter.headline && commenter.headline !== commenter.currentRole && (
+            <p className="text-xs text-slate-500">{commenter.headline}</p>
+          )}
           <p className="text-sm font-semibold text-slate-800">
             {commenter.currentRole} ·{" "}
             <span className="text-slate-600">{commenter.organization}</span>
@@ -958,34 +1044,7 @@ function CommenterCard({
       </div>
 
       {/* Complete LinkedIn URL */}
-      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
-        <a
-          href={commenter.linkedinUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex min-w-0 flex-1 items-center gap-1.5 truncate font-mono text-xs font-medium text-blue-700 hover:underline"
-        >
-          <ArrowUpRight className="h-3.5 w-3.5 shrink-0" />
-          <span className="truncate">{commenter.linkedinUrl}</span>
-        </a>
-        <button
-          type="button"
-          onClick={() => onCopy(commenter.id, commenter.linkedinUrl)}
-          className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
-        >
-          {copiedId === commenter.id ? (
-            <>
-              <Check className="h-3 w-3 text-emerald-600" />
-              Copied
-            </>
-          ) : (
-            <>
-              <Copy className="h-3 w-3" />
-              Copy URL
-            </>
-          )}
-        </button>
-      </div>
+      <ProfileUrlRow id={commenter.id} url={commenter.linkedinUrl} copiedId={copiedId} onCopy={onCopy} />
 
       {/* School-Ecosystem Indicators */}
       {commenter.schoolEcosystemIndicators.length > 0 && (
@@ -1002,7 +1061,8 @@ function CommenterCard({
       )}
 
       {/* AI Explanation */}
-      <p className="mt-3 text-xs leading-relaxed text-slate-700">
+      <AiChip ai={commenter.aiClassification} />
+      <p className="mt-2 text-xs leading-relaxed text-slate-700">
         {commenter.relevanceExplanation}
       </p>
 
@@ -1073,7 +1133,11 @@ function LookalikeCard({
             <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-bold text-violet-800 tabular-nums">
               {lookalike.similarityScore}% Seed Match
             </span>
+            <SourceBadge dataSource={lookalike.dataSource} isTestData={lookalike.isTestData} />
           </div>
+          {lookalike.headline && lookalike.headline !== lookalike.currentRole && (
+            <p className="text-xs text-slate-500">{lookalike.headline}</p>
+          )}
           <p className="text-sm font-semibold text-slate-800">
             {lookalike.currentRole} ·{" "}
             <span className="text-slate-600">{lookalike.organization}</span>
@@ -1094,34 +1158,7 @@ function LookalikeCard({
       </div>
 
       {/* Complete LinkedIn URL */}
-      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
-        <a
-          href={lookalike.linkedinUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex min-w-0 flex-1 items-center gap-1.5 truncate font-mono text-xs font-medium text-blue-700 hover:underline"
-        >
-          <ArrowUpRight className="h-3.5 w-3.5 shrink-0" />
-          <span className="truncate">{lookalike.linkedinUrl}</span>
-        </a>
-        <button
-          type="button"
-          onClick={() => onCopy(lookalike.id, lookalike.linkedinUrl)}
-          className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
-        >
-          {copiedId === lookalike.id ? (
-            <>
-              <Check className="h-3 w-3 text-emerald-600" />
-              Copied
-            </>
-          ) : (
-            <>
-              <Copy className="h-3 w-3" />
-              Copy URL
-            </>
-          )}
-        </button>
-      </div>
+      <ProfileUrlRow id={lookalike.id} url={lookalike.linkedinUrl} copiedId={copiedId} onCopy={onCopy} />
 
       {/* Indicators */}
       {lookalike.schoolEcosystemIndicators.length > 0 && (
@@ -1138,7 +1175,8 @@ function LookalikeCard({
       )}
 
       {/* AI Explanation */}
-      <p className="mt-3 text-xs leading-relaxed text-slate-700">
+      <AiChip ai={lookalike.aiClassification} />
+      <p className="mt-2 text-xs leading-relaxed text-slate-700">
         {lookalike.relevanceExplanation}
       </p>
 
@@ -1164,8 +1202,94 @@ function LookalikeCard({
               : {seed.rationale}
             </div>
           ))}
+          {lookalike.discoveredVia && lookalike.discoveredVia.provider !== "labelled_test_dataset" && (
+            <div className="mt-1 border-t border-violet-200/70 pt-1.5 text-[11px] text-slate-600">
+              Found via public profile search{" "}
+              <code className="rounded bg-white px-1 font-mono">{lookalike.discoveredVia.query}</code>, built
+              from seed(s): {lookalike.discoveredVia.seedCommenterNames.join(", ")}
+            </div>
+          )}
         </div>
       </div>
     </article>
+  );
+}
+
+function ProfileUrlRow({
+  id,
+  url,
+  copiedId,
+  onCopy,
+}: {
+  id: string;
+  url: string;
+  copiedId: string | null;
+  onCopy: (id: string, url: string) => void;
+}) {
+  if (!url) {
+    return (
+      <div className="mt-3 rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-slate-500">
+        Profile URL not available from this source
+      </div>
+    );
+  }
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex min-w-0 flex-1 items-center gap-1.5 truncate font-mono text-xs font-medium text-blue-700 hover:underline"
+      >
+        <ArrowUpRight className="h-3.5 w-3.5 shrink-0" />
+        <span className="truncate">{url}</span>
+      </a>
+      <button
+        type="button"
+        onClick={() => onCopy(id, url)}
+        className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+      >
+        {copiedId === id ? (
+          <>
+            <Check className="h-3 w-3 text-emerald-600" />
+            Copied
+          </>
+        ) : (
+          <>
+            <Copy className="h-3 w-3" />
+            Copy URL
+          </>
+        )}
+      </button>
+    </div>
+  );
+}
+
+function SourceBadge({
+  dataSource,
+  isTestData,
+}: {
+  dataSource: DataSourceMode;
+  isTestData: boolean;
+}) {
+  const { label, cls } = isTestData
+    ? { label: "Test data", cls: "border-amber-200 bg-amber-50 text-amber-900" }
+    : dataSource === "authorized_provider"
+      ? { label: "Live provider", cls: "border-emerald-200 bg-emerald-50 text-emerald-900" }
+      : { label: "User import", cls: "border-sky-200 bg-sky-50 text-sky-900" };
+  return (
+    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${cls}`}>{label}</span>
+  );
+}
+
+function AiChip({ ai }: { ai?: AiClassification }) {
+  if (!ai) return null;
+  return (
+    <div className="mt-3 inline-flex flex-wrap items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/70 px-2 py-1 text-[11px] text-indigo-900">
+      <Sparkles className="h-3 w-3" />
+      <span className="font-bold">Gemini:</span>
+      <span>{ai.persona}</span>
+      <span className="font-bold tabular-nums">· fit {ai.fitScore}/100</span>
+    </div>
   );
 }

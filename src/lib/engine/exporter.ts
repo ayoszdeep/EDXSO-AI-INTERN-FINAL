@@ -1,7 +1,11 @@
 import { DiscoveryResult } from "@/lib/types";
 
 function escapeCsvCell(value: string | number | boolean | null | undefined): string {
-  const str = value === null || value === undefined ? "" : String(value);
+  let str = value === null || value === undefined ? "" : String(value);
+  // Neutralise spreadsheet formula injection from externally sourced text
+  if (/^[=+\-@\t\r]/.test(str) && !/^-?\d+(\.\d+)?$/.test(str)) {
+    str = `'${str}`;
+  }
   if (/[",\n\r]/.test(str)) {
     return `"${str.replace(/"/g, '""')}"`;
   }
@@ -14,7 +18,7 @@ function escapeCsvCell(value: string | number | boolean | null | undefined): str
  */
 export function exportResultToJson(result: DiscoveryResult): string {
   const payload = {
-    exportSchemaVersion: "1.0",
+    exportSchemaVersion: "1.1",
     exportedAt: new Date().toISOString(),
     runMetadata: {
       runId: result.runId,
@@ -25,6 +29,8 @@ export function exportResultToJson(result: DiscoveryResult): string {
       isTestData: result.isTestData,
       complianceNotice: result.complianceNotice,
       aiMethod: result.aiMethod,
+      providers: result.providers,
+      warnings: result.warnings,
       stats: result.stats,
     },
     discoveredPosts: result.posts,
@@ -44,6 +50,7 @@ export function exportResultToJson(result: DiscoveryResult): string {
       commentCount: c.commentCount,
       comments: c.comments,
       relevanceExplanation: c.relevanceExplanation,
+      aiClassification: c.aiClassification ?? null,
       dataSource: c.dataSource,
       isTestData: c.isTestData,
     })),
@@ -63,6 +70,8 @@ export function exportResultToJson(result: DiscoveryResult): string {
       seedProfiles: l.seedProfiles,
       similarityEvidence: l.similarityEvidence,
       relevanceExplanation: l.relevanceExplanation,
+      discoveredVia: l.discoveredVia ?? null,
+      aiClassification: l.aiClassification ?? null,
       dataSource: l.dataSource,
       isTestData: l.isTestData,
     })),
@@ -98,6 +107,9 @@ export function exportResultToCsv(result: DiscoveryResult): string {
     "similarity_score",
     "similarity_evidence",
     "relevance_explanation",
+    "ai_persona",
+    "ai_fit_score",
+    "discovery_query",
     "data_source",
     "is_test_data",
   ];
@@ -109,7 +121,7 @@ export function exportResultToCsv(result: DiscoveryResult): string {
       "original_commenter",
       String(idx + 1),
       c.name,
-      c.linkedinUrl,
+      c.linkedinUrl || "not available",
       c.currentRole,
       c.organization,
       c.location ?? "",
@@ -125,6 +137,9 @@ export function exportResultToCsv(result: DiscoveryResult): string {
       "",
       "",
       c.relevanceExplanation,
+      c.aiClassification?.persona ?? "",
+      c.aiClassification ? String(c.aiClassification.fitScore) : "",
+      "",
       c.dataSource,
       String(c.isTestData),
     ]);
@@ -158,10 +173,14 @@ export function exportResultToCsv(result: DiscoveryResult): string {
       String(l.similarityScore),
       l.similarityEvidence.join(" | "),
       l.relevanceExplanation,
+      l.aiClassification?.persona ?? "",
+      l.aiClassification ? String(l.aiClassification.fitScore) : "",
+      l.discoveredVia?.query ?? "",
       l.dataSource,
       String(l.isTestData),
     ]);
   });
 
-  return rows.map((row) => row.map(escapeCsvCell).join(",")).join("\n");
+  // BOM so Excel opens UTF-8 names correctly
+  return "﻿" + rows.map((row) => row.map(escapeCsvCell).join(",")).join("\n");
 }

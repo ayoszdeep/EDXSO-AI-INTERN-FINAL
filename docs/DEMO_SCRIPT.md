@@ -1,27 +1,29 @@
-# End-to-End Demo Script (5–7 Minutes)
+# End-to-End Demo Script (about 8 minutes)
 
-1. **Introduction & Compliance Overview (0:00–1:00)**
-   - Open the live deployed dashboard.
-   - Point out the **Data Provenance Banner** explicitly labelling the evaluation dataset (`Clearly Labelled Test Dataset`) and explaining why unauthorized LinkedIn scraping is avoided.
+1. **Intro and compliance (0:00–1:00)**
+   - Open the live URL. The first view is the **labelled test dataset**: point out the amber provenance banner, the "Test data" badges, and the providers line.
+   - Explain that LinkedIn has no public search or comments API, so the app uses a public search index, a licensed comments provider, and user-supplied data. It never logs into or scrapes LinkedIn.
 
-2. **Stage 1 & 2 — Keyword Search (`"K12 B2B Sales"`) & Post Discovery (1:00–2:15)**
-   - Show the default `"K12 B2B Sales"` search run returning **5 recent relevant posts** with complete URLs, authors, dates, topics, and snippets.
-   - Click **Scoring Logic** in the header to briefly walk through the 12-dim semantic embedding space and `35 / 25 / 25 / 15` rubric.
+2. **Keyword search on live data (1:00–2:30)**
+   - Keep *Live LinkedIn data* selected, type `K12 B2B Sales`, and click **Run Discovery**.
+   - Show the 5 real posts: URL, author, exact date (decoded from the activity id), snippet and comment count.
+   - Show the green banner: "Posts: serper public search index · Comments: Apify …".
 
-3. **Stage 3 & 4 — Commenter Extraction, Deduplication & AI Analysis (2:15–3:45)**
-   - Switch to **Original Commenters** / **Side-by-Side Split View**.
-   - Highlight how `15` raw comments across the 5 posts are deduplicated down to `9` unique commenters (`6` duplicates merged).
-   - Expand **"View source post traceability & comments"** on *Dr. Kavita Sharma* (`3 posts`) and *Rajeshwar Nair* (`2 posts`) to show multi-post URL traceability and comment context.
-   - Contrast top-scoring school advisors/trustees (`85–95/100`) against the bottom-ranked *Sunita Verma (Corporate L&D)* (`Low Fit`), proving semantic drift penalties work.
+3. **Commenter extraction and dedupe (2:30–4:00)**
+   - With an Apify token: show commenters from all posts, a "Deduplicated · N comments" badge, and expand **source post traceability** to show each post URL and comment.
+   - Without a token: open **Providers & Import**, paste text copied from a post's comment section (or upload a CSV with `post_url`), show the live preview table, apply, and rerun.
 
-4. **Stage 5 — Lookalike Discovery & Seed Traceability (3:45–5:00)**
-   - Inspect the **AI-Discovered Lookalikes** column (`ai_lookalike_profile`).
-   - Show that none of the original commenters appear here, and point out the **Seed Profile Traceability** card on *Dr. Vandana Kulkarni* and *Sanjeevani Reddy* showing exact seed matches, `%` similarity, and shared signals.
+4. **AI profile analysis and ranking (4:00–5:15)**
+   - Open **Scoring Logic**: 35/25/25/15 rubric, 12-dim concept embedding, Gemini blend (60/40).
+   - On a card, show the indicators, the Gemini persona chip with fit score, the explanation, and the breakdown bars. Use the tier filter and min-score slider.
 
-5. **Direct LinkedIn Post URL Mode & Manual Import (5:00–6:00)**
-   - Click **Isolate Post** on a discovered post (or switch to **Direct Post URL** tab) to demonstrate single-post analysis.
-   - Open **Providers & Import**, click **"Load sample import rows"**, paste a custom LinkedIn post URL, and re-run to show compliant processing of user-supplied URLs + engagement records.
+5. **Lookalike discovery (5:15–6:30)**
+   - In the lookalike column, show the real `linkedin.com/in/...` URLs, **% Seed Match**, the seed traceability box, and "Found via public profile search `"former principal" Pune`, built from seed …".
+   - Point out the **Category Isolation: Verified** tile: no commenter appears as a lookalike.
 
-6. **Export & CLI Verification (6:00–6:45)**
-   - Click **Export CSV** and **Export JSON**, opening the downloaded files to confirm `original_commenter` and `ai_lookalike_profile` are exported as separate categories with complete LinkedIn URLs and provenance flags.
-   - (Optional terminal shot): Run `npm run cli -- --query "K12 B2B Sales"` to show CLI parity.
+6. **Direct post URL (6:30–7:15)**
+   - Click **Isolate Post** on a discovered post, or paste any LinkedIn post URL in *Direct Post URL* mode, and run.
+
+7. **Export and CLI (7:15–8:00)**
+   - Export CSV and JSON. Open them to show `record_category`, `discovery_query`, `ai_persona`, `data_source` and `is_test_data`.
+   - Optional terminal: `npm run cli -- --query "K12 B2B Sales" --source live`.

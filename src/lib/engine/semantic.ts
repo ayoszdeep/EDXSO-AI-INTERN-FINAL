@@ -5,7 +5,7 @@
  * 1. A 12-dimensional domain-grounded K12 Education Ecosystem Concept Embedding
  *    (handles synonymy & semantic equivalence beyond exact keyword matching).
  * 2. Normalized token + bigram TF-cosine similarity for nuanced textual overlap.
- * 3. Optional live LLM / Embedding enrichment (Gemini / OpenAI) when configured.
+ * 3. Optional Gemini embeddings + LLM classification layered on top (see gemini.ts).
  */
 
 export const EMBEDDING_DIMENSIONS = [
@@ -282,72 +282,4 @@ export function computeTextSimilarity(textA: string, textB: string): number {
   const conceptSim = Math.max(0, cosineSimilarity(embA, embB));
   const tokenSim = computeTokenCosineSimilarity(textA, textB);
   return Math.min(1, conceptSim * 0.58 + tokenSim * 0.42);
-}
-
-/**
- * Optional Gemini embedding/reasoning helper when user provides GEMINI_API_KEY.
- * Gracefully falls back to local semantic engine if unavailable or rate-limited.
- */
-export async function tryGeminiSemanticSummary(
-  prompt: string,
-  apiKey?: string
-): Promise<string | null> {
-  const key = apiKey?.trim() || process.env.GEMINI_API_KEY?.trim();
-  if (!key) return null;
-
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(
-        key
-      )}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.2, maxOutputTokens: 256 },
-        }),
-      }
-    );
-    if (!response.ok) return null;
-    const data = (await response.json()) as {
-      candidates?: Array<{
-        content?: { parts?: Array<{ text?: string }> };
-      }>;
-    };
-    return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
-  } catch {
-    return null;
-  }
-}
-
-export async function tryOpenAiSemanticSummary(
-  prompt: string,
-  apiKey?: string
-): Promise<string | null> {
-  const key = apiKey?.trim() || process.env.OPENAI_API_KEY?.trim();
-  if (!key) return null;
-
-  try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.2,
-        max_tokens: 256,
-      }),
-    });
-    if (!response.ok) return null;
-    const data = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    return data.choices?.[0]?.message?.content?.trim() || null;
-  } catch {
-    return null;
-  }
 }

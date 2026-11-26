@@ -5,10 +5,24 @@ export type DataSourceMode =
 
 export type SearchInputMode = "keyword" | "post_url";
 
-export type AiMethod =
-  | "local_semantic_v1"
-  | "gemini_hybrid"
-  | "openai_hybrid";
+export type AiMethod = "local_semantic_v1" | "gemini_hybrid";
+
+/** LLM (Gemini) zero-shot classification of a profile against EDXSO target personas. */
+export interface AiClassification {
+  fitScore: number; // 0-100
+  persona: string;
+  isSchoolEcosystem: boolean;
+  rationale: string;
+  model: string;
+}
+
+/** Records which seed-derived public search query surfaced a lookalike candidate. */
+export interface DiscoveryProvenance {
+  provider: "serper" | "tavily" | "labelled_test_dataset";
+  query: string;
+  seedCommenterIds: string[];
+  seedCommenterNames: string[];
+}
 
 export type PersonaTier =
   | "Primary Decision-Maker / Advisor"
@@ -67,6 +81,7 @@ export interface CandidateProfileRecord {
   skills: string[];
   schoolNetworkSignals: string[];
   recentTopics: string[];
+  discoveredVia?: DiscoveryProvenance;
   dataSource: DataSourceMode;
   isTestData: boolean;
 }
@@ -106,6 +121,7 @@ export interface AnalyzedCommenter {
   relevanceExplanation: string;
   personaTier: PersonaTier;
   aiMethod: AiMethod;
+  aiClassification?: AiClassification;
   dataSource: DataSourceMode;
   isTestData: boolean;
 }
@@ -140,26 +156,33 @@ export interface LookalikeProfile {
   relevanceExplanation: string;
   personaTier: PersonaTier;
   aiMethod: AiMethod;
+  aiClassification?: AiClassification;
+  discoveredVia?: DiscoveryProvenance;
   dataSource: DataSourceMode;
   isTestData: boolean;
 }
 
+export interface ImportedCommenter {
+  name: string;
+  /** Empty string when the source (e.g. copied page text) carried no profile link. */
+  linkedinUrl: string;
+  currentRole?: string;
+  organization?: string;
+  location?: string;
+  headline?: string;
+  commentText?: string;
+  /** Post the person commented on. Required to attribute rows in keyword mode. */
+  postUrl?: string;
+}
+
 export interface ManualEngagementInput {
-  postUrl: string;
+  postUrl?: string;
   postAuthorName?: string;
   postAuthorRole?: string;
   postAuthorProfileUrl?: string;
   postDate?: string;
   postSnippet?: string;
-  commenters?: Array<{
-    name: string;
-    linkedinUrl: string;
-    currentRole?: string;
-    organization?: string;
-    location?: string;
-    headline?: string;
-    commentText?: string;
-  }>;
+  commenters?: ImportedCommenter[];
 }
 
 export interface DiscoveryRequest {
@@ -172,10 +195,17 @@ export interface DiscoveryRequest {
   manualInput?: ManualEngagementInput;
   apiKeys?: {
     geminiApiKey?: string;
-    openAiApiKey?: string;
     serperApiKey?: string;
     tavilyApiKey?: string;
+    apifyApiToken?: string;
   };
+}
+
+export interface ProviderUsage {
+  posts: string;
+  comments: string;
+  lookalikes: string;
+  ai: string;
 }
 
 export interface DiscoveryResult {
@@ -187,6 +217,8 @@ export interface DiscoveryResult {
   isTestData: boolean;
   complianceNotice: string;
   aiMethod: AiMethod;
+  providers: ProviderUsage;
+  warnings: string[];
   posts: LinkedInPost[];
   stats: {
     postsFound: number;

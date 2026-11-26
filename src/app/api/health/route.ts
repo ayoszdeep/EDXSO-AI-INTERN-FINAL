@@ -5,11 +5,12 @@ export async function GET() {
     status: "ok",
     service: "edxso-linkedin-discovery",
     timestamp: new Date().toISOString(),
+    // Booleans only: key values are never exposed
     providersConfigured: {
-      gemini: Boolean(process.env.GEMINI_API_KEY),
-      openai: Boolean(process.env.OPENAI_API_KEY),
-      serper: Boolean(process.env.SERPER_API_KEY),
-      tavily: Boolean(process.env.TAVILY_API_KEY),
+      serper: Boolean(process.env.SERPER_API_KEY?.trim()),
+      tavily: Boolean(process.env.TAVILY_API_KEY?.trim()),
+      apify: Boolean(process.env.APIFY_API_TOKEN?.trim()),
+      gemini: Boolean(process.env.GEMINI_API_KEY?.trim()),
     },
   });
 }

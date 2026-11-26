@@ -1,4 +1,4 @@
-import { canonicalizeLinkedInUrl } from "@/lib/data/compliant-provider";
+import { canonicalizeLinkedInUrl, cleanLinkedInUrl } from "@/lib/data/linkedin-urls";
 import { CommentReference, DataSourceMode, RawCommentRecord } from "@/lib/types";
 
 export interface DeduplicatedCommenter {
@@ -54,7 +54,7 @@ export function deduplicateCommenters(
       byCanonicalUrl.set(dedupKey, {
         id: `commenter-${byCanonicalUrl.size + 1}`,
         name: record.authorName,
-        linkedinUrl: canonicalUrl || record.authorProfileUrl.trim(),
+        linkedinUrl: cleanLinkedInUrl(record.authorProfileUrl),
         canonicalLinkedinUrl: canonicalUrl,
         headline: record.headline,
         currentRole: record.currentRole,

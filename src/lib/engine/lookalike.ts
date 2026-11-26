@@ -1,4 +1,4 @@
-import { canonicalizeLinkedInUrl } from "@/lib/data/compliant-provider";
+import { canonicalizeLinkedInUrl, cleanLinkedInUrl } from "@/lib/data/linkedin-urls";
 import {
   extractSchoolEcosystemIndicators,
   scoreProfileForEdxso,
@@ -26,6 +26,14 @@ export function discoverLookalikes(params: {
   queryContext: string;
   maxLookalikes?: number;
   aiMethod?: AiMethod;
+  /**
+   * Optional dense-embedding similarity (0..1) between a candidate and a seed,
+   * e.g. Gemini embeddings. When present it is blended 60/40 with the local
+   * concept-embedding + token similarity.
+   */
+  embeddingSimilarity?: (candidateId: string, seedId: string) => number | undefined;
+  /** Extra canonical URLs that must never appear as lookalikes (e.g. post authors). */
+  excludeCanonicalUrls?: string[];
 }): LookalikeProfile[] {
   const {
     commenters,
@@ -33,6 +41,8 @@ export function discoverLookalikes(params: {
     queryContext,
     maxLookalikes = 12,
     aiMethod = "local_semantic_v1",
+    embeddingSimilarity,
+    excludeCanonicalUrls = [],
   } = params;
 
   if (commenters.length === 0) {
@@ -41,8 +51,13 @@ export function discoverLookalikes(params: {
 
   // Strict exclusion set: any profile that commented on a source post cannot be labelled as a lookalike
   const commenterCanonicalUrls = new Set(
-    commenters.map((c) => canonicalizeLinkedInUrl(c.linkedinUrl))
+    [
+      ...commenters.map((c) => canonicalizeLinkedInUrl(c.linkedinUrl)),
+      ...excludeCanonicalUrls,
+    ].filter(Boolean)
   );
+  const commenterNames = new Set(commenters.map((c) => c.name.trim().toLowerCase()));
+  const seenCandidates = new Set<string>();
 
   // Use high/medium-relevance commenters first as primary seeds (fallback to all commenters if none >= 50)
   const qualifiedSeeds = commenters.filter((c) => c.relevanceScore >= 50);
@@ -57,9 +72,14 @@ export function discoverLookalikes(params: {
 
   for (const candidate of candidatePool) {
     const canonicalCandUrl = canonicalizeLinkedInUrl(candidate.linkedinUrl);
-    if (commenterCanonicalUrls.has(canonicalCandUrl)) {
+    if (!canonicalCandUrl || commenterCanonicalUrls.has(canonicalCandUrl) || seenCandidates.has(canonicalCandUrl)) {
       continue;
     }
+    // Commenters imported without a profile URL are matched by name so they are never relabelled as lookalikes
+    if (commenterNames.has(candidate.name.trim().toLowerCase())) {
+      continue;
+    }
+    seenCandidates.add(canonicalCandUrl);
 
     const candCorpus = `${candidate.headline} ${candidate.currentRole} ${candidate.organization} ${candidate.experienceSummary} ${candidate.skills.join(" ")} ${candidate.schoolNetworkSignals.join(" ")} ${candidate.recentTopics.join(" ")}`;
     const candIndicators = extractSchoolEcosystemIndicators({
@@ -76,7 +96,10 @@ export function discoverLookalikes(params: {
     // Measure similarity against every seed commenter
     const seedMatches: SeedMatchReference[] = seedTexts
       .map(({ seed, corpus }) => {
-        const sim = computeTextSimilarity(candCorpus, corpus);
+        const localSim = computeTextSimilarity(candCorpus, corpus);
+        const denseSim = embeddingSimilarity?.(candidate.id, seed.id);
+        const sim =
+          denseSim === undefined ? localSim : Math.min(1, denseSim * 0.6 + localSim * 0.4);
         const sharedIndicators = candIndicators.filter((tag) =>
           seed.schoolEcosystemIndicators.includes(tag)
         );
@@ -138,12 +161,17 @@ export function discoverLookalikes(params: {
         ...candidate.schoolNetworkSignals,
       ])
     ).slice(0, 6);
+    if (candidate.discoveredVia && candidate.discoveredVia.provider !== "labelled_test_dataset") {
+      similarityEvidence.push(
+        `Surfaced by public profile search "${candidate.discoveredVia.query}" derived from seed(s): ${candidate.discoveredVia.seedCommenterNames.join(", ")}`
+      );
+    }
 
     results.push({
       id: candidate.id,
       category: "ai_lookalike_profile",
       name: candidate.name,
-      linkedinUrl: canonicalCandUrl || candidate.linkedinUrl,
+      linkedinUrl: cleanLinkedInUrl(candidate.linkedinUrl),
       canonicalLinkedinUrl: canonicalCandUrl,
       headline: candidate.headline,
       currentRole: candidate.currentRole,
@@ -160,6 +188,7 @@ export function discoverLookalikes(params: {
       relevanceExplanation: scored.explanation,
       personaTier: scored.personaTier,
       aiMethod,
+      discoveredVia: candidate.discoveredVia,
       dataSource: candidate.dataSource,
       isTestData: candidate.isTestData,
     });

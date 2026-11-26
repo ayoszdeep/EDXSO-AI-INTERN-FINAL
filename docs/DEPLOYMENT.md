@@ -1,32 +1,33 @@
-# Deployment Guide — EDXSO LinkedIn Discovery Tool
+# Deployment Guide
 
-This application is stateless by default (all AI semantic scoring, deduplication, and lookalike matching run inside Next.js API Route Handlers with zero required external database or API keys), so it deploys cleanly to Vercel, Netlify, Render, or any Node 20+ server.
+The app is a stateless Next.js 16 project. API route handlers run as serverless functions (`maxDuration = 60s`, because live runs wait on the comments provider and Gemini).
 
-## Option 1: Deploy to Vercel (Recommended, ~2 Minutes)
-1. Install or run the Vercel CLI from the project root:
-   ```bash
-   npx vercel login
-   npx vercel --prod
-   ```
-2. Accept the default Next.js framework settings (already pre-configured in `vercel.json`).
-3. *(Optional)* Add environment variables in the Vercel dashboard (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `SERPER_API_KEY`, `TAVILY_API_KEY`) if you want live search index / LLM enrichment enabled alongside the built-in semantic engine.
-4. Verify the live deployment:
-   - `GET https://<your-app>.vercel.app/api/health` → returns `{"status":"ok", ...}`
-   - `GET https://<your-app>.vercel.app/api/discover?query=K12+B2B+Sales` → returns 5 posts, deduplicated commenters, and seed-traced lookalikes.
-   - Open `https://<your-app>.vercel.app/` in a browser and test CSV/JSON export.
+## Vercel (recommended)
 
-## Option 2: Deploy via GitHub + Vercel / Netlify / Render Web UI
-1. Push this repository to GitHub:
-   ```bash
-   git remote add origin https://github.com/<your-username>/<repo-name>.git
-   git push -u origin main
-   ```
-2. Import the repository in **Vercel**, **Netlify**, or **Render**:
-   - **Build Command**: `npm run build`
-   - **Start Command** (for Node hosts like Render): `npm run start`
-   - **Node Version**: `20.x` or `22.x`
+1. Push the repository to GitHub.
+2. In Vercel, choose **Add New → Project** and import the repo. The Next.js framework is auto-detected (`vercel.json`).
+3. Under **Settings → Environment Variables** (Production + Preview), add:
+   - `SERPER_API_KEY`: live posts and lookalike search
+   - `GEMINI_API_KEY`: AI ranking
+   - `APIFY_API_TOKEN`: automatic commenter retrieval (optional; users can import lists instead)
+4. Deploy, then verify:
+   - `https://<app>.vercel.app/api/health` should show `providersConfigured.serper: true`, etc.
+   - `https://<app>.vercel.app/api/discover?query=K12+B2B+Sales&source=live` should return 5 real posts.
+   - Open the site and run a keyword search, a post-URL run, and a CSV/JSON export.
 
-## Hosting & Security Notes
-- No LinkedIn credentials or cookies are stored or requested.
-- Optional API keys entered in the UI **Providers & Import** modal stay in browser session memory only and are never written to server storage.
-- For production persistence with a PostgreSQL + `pgvector` instance, apply `sql/schema.sql`.
+CLI alternative: `npx vercel login`, then `npx vercel --prod`, then `npx vercel env add SERPER_API_KEY` (and the other variables), then redeploy.
+
+> Vercel Hobby allows functions up to 60 s. If Apify regularly times out on large threads, lower the per-post comment cap in `src/lib/data/providers/apify.ts` or use a Pro plan.
+
+## Other Node hosts (Render, Railway, VM)
+- Build: `npm ci && npm run build`
+- Start: `npm run start` (port from `PORT`)
+- Node 20.12+ or 22.x
+- Set the same environment variables.
+
+## Cost and abuse notes for a public URL
+- On first page load the app runs the free labelled test dataset (plus Gemini ranking if a key is set). Live provider credit is spent only when a user clicks **Run Discovery** in live mode.
+- Identical provider calls are cached in memory for 30–60 min.
+- Serper's free tier is 2,500 searches. A live keyword run uses about 1–3 searches for posts plus up to 5 for lookalikes.
+- Apify charges per comment (about $1.5–2 per 1,000). Set a spending limit in the Apify console.
+- Rotate keys if they are ever exposed. Never commit `.env.local` (it is gitignored).

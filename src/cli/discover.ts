@@ -2,6 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { exportResultToCsv, exportResultToJson } from "../lib/engine/exporter";
 import { runDiscoveryPipeline } from "../lib/engine/pipeline";
+import { parseImportedCommenters } from "../lib/data/import-parser";
+
+// Load local secrets the same way `next dev` does (never committed)
+for (const envFile of [".env.local", ".env"]) {
+  const full = path.resolve(process.cwd(), envFile);
+  if (fs.existsSync(full)) process.loadEnvFile(full);
+}
 
 function parseArgs(argv: string[]) {
   const args: Record<string, string> = {};
@@ -35,6 +42,8 @@ Options:
   --url <linkedin_url>     Direct LinkedIn post URL to analyze
   --max-posts <number>     Number of posts to discover (default: 5)
   --max-lookalikes <num>   Max lookalikes to return (default: 12)
+  --source <live|test>     Force live providers or the labelled test dataset (default: live if keys exist)
+  --import <file>          Commenter export (CSV/JSON/pipe/copied text) to attach to the run
   --format <json|csv>      Output export format (default: summary, or json/csv with --out)
   --out <filepath>         Write full export to disk
   --help                   Show this help message
@@ -49,8 +58,14 @@ async function main() {
   }
 
   const mode = args.url ? "post_url" : "keyword";
+  const imported = args.import
+    ? parseImportedCommenters(fs.readFileSync(path.resolve(process.cwd(), args.import), "utf8"))
+    : [];
   const result = await runDiscoveryPipeline({
     mode,
+    dataSource:
+      args.source === "test" ? "labelled_test_dataset" : args.source === "live" ? "authorized_provider" : undefined,
+    manualInput: imported.length > 0 ? { postUrl: args.url, commenters: imported } : undefined,
     query: args.query ?? "K12 B2B Sales",
     postUrl: args.url,
     maxPosts: args["max-posts"] ? Number(args["max-posts"]) : 5,
@@ -82,10 +97,17 @@ async function main() {
     `Commenters:   ${result.stats.uniqueCommenters} unique (${result.stats.deduplicatedDuplicatesRemoved} duplicates merged)`
   );
   console.log(`Lookalikes:   ${result.stats.lookalikesDiscovered}`);
+  console.log(`Providers:    posts=${result.providers.posts} | comments=${result.providers.comments}`);
+  console.log(`              lookalikes=${result.providers.lookalikes}`);
+  console.log(`              ranking=${result.providers.ai}`);
+  if (result.warnings.length > 0) {
+    console.log("\n--- Run notes ---");
+    result.warnings.forEach((w) => console.log(`- ${w}`));
+  }
 
   console.log("\n--- Discovered Posts ---");
   result.posts.forEach((p, idx) => {
-    console.log(`${idx + 1}. ${p.authorName} (${p.publishedAt.slice(0, 10)})`);
+    console.log(`${idx + 1}. ${p.authorName} (${p.publishedAt.slice(0, 10) || "date n/a"})`);
     console.log(`   URL: ${p.url}`);
     console.log(`   Snippet: ${p.snippet}`);
   });
@@ -95,7 +117,7 @@ async function main() {
     console.log(
       `${idx + 1}. [${c.relevanceScore}/100] ${c.name} — ${c.currentRole} @ ${c.organization}`
     );
-    console.log(`   URL: ${c.linkedinUrl}`);
+    console.log(`   URL: ${c.linkedinUrl || "not available"}`);
     console.log(`   Posts commented (${c.commentCount}): ${c.associatedPostUrls.join(", ")}`);
   });
 
@@ -106,6 +128,7 @@ async function main() {
       `${idx + 1}. [${l.relevanceScore}/100 | ${l.similarityScore}% sim] ${l.name} — ${l.currentRole} @ ${l.organization}`
     );
     console.log(`   URL: ${l.linkedinUrl}`);
+    if (l.discoveredVia) console.log(`   Found via: ${l.discoveredVia.query}`);
     if (topSeed) {
       console.log(`   Seed Trace: ${topSeed.seedCommenterName} (${topSeed.similarityScore}%)`);
     }
